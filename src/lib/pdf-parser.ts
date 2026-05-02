@@ -1,15 +1,10 @@
-import { PDFParse } from "pdf-parse";
+import { extractText as unpdfExtractText, getDocumentProxy } from "unpdf";
 import type { Recipe } from "./recipe-schema";
 
 async function extractText(buffer: Buffer): Promise<string> {
-  const parser = new PDFParse({ data: buffer });
-  const result = await parser.getText();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const r = result as any;
-  if (typeof r === "string") return r;
-  if (r.text) return r.text;
-  if (r.pages) return r.pages.map((p: { text: string }) => p.text).join("\n");
-  return String(r);
+  const pdf = await getDocumentProxy(new Uint8Array(buffer));
+  const { text } = await unpdfExtractText(pdf, { mergePages: true });
+  return Array.isArray(text) ? text.join("\n") : text;
 }
 
 const ALWAYS_TA_INGREDIENTS = [
