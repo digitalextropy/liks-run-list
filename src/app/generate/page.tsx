@@ -71,6 +71,7 @@ export default function GeneratePage() {
   const [validationResults, setValidationResults] = useState<ValidationResult[] | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [runList, setRunList] = useState<RunListOutput | null>(null);
+  const [pdfVerified, setPdfVerified] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -131,6 +132,12 @@ export default function GeneratePage() {
     });
 
     if (validated) {
+      const verified = new Set(
+        validated
+          .filter((v) => v.status === "matched" || v.status === "ambiguous")
+          .map((v) => (v.matchedRecipe?.name || v.recipe).toLowerCase())
+      );
+      setPdfVerified(verified);
       const notFound = validated.filter((v) => v.status === "not_found");
       if (notFound.length > 0) {
         setWarnings((w) => [
@@ -270,28 +277,20 @@ export default function GeneratePage() {
               </ul>
             </div>
           )}
-          <div className="flex items-center justify-between">
-            <h2 className="text-lg font-semibold text-gray-800">Run List</h2>
-            <div className="flex gap-2">
-              <button
-                onClick={() => window.print()}
-                className="text-sm bg-gray-100 text-gray-700 px-3 py-1.5 rounded hover:bg-gray-200 transition-colors"
-              >
-                Print
-              </button>
-              <button
-                onClick={() => {
-                  setRunList(null);
-                  setValidationResults(null);
-                  setWarnings([]);
-                }}
-                className="text-sm bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded hover:bg-indigo-100 transition-colors"
-              >
-                New Run List
-              </button>
-            </div>
+          <div className="flex justify-end print:hidden">
+            <button
+              onClick={() => {
+                setRunList(null);
+                setValidationResults(null);
+                setWarnings([]);
+                setPdfVerified(new Set());
+              }}
+              className="text-sm bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded hover:bg-indigo-100 transition-colors"
+            >
+              ← New Run List
+            </button>
           </div>
-          <RunListTable data={runList} />
+          <RunListTable data={runList} pdfVerified={pdfVerified} />
         </div>
       )}
     </div>

@@ -25,6 +25,7 @@ export interface RunListOutput {
       chain_label?: string;
       flags: string[];
       mix_ins?: string;
+      section_label?: string;
     }[];
     summary: {
       total_runs: number;
@@ -91,11 +92,12 @@ You MUST respond with ONLY valid JSON matching this exact schema (no markdown, n
           "flavor": string,
           "tubs": number,
           "clean_after": "NO_CLEAN" | "WATER_RINSE" | "RINSE" | "TAKE_APART",
-          "reason": string (brief explanation for the cleaning level),
+          "reason": string (BRIEF — under 60 chars when possible — e.g. "Cookie pieces — nothing similar follows.", "Identical — skip.", "Mint→coffee = major change."),
           "chain_badge": boolean,
           "chain_label": string (optional: "chain", "×2", "×3"),
           "flags": string[] (e.g. ["nut", "peanut", "moved", "fix"]),
-          "mix_ins": string (optional: display text for add-ins/fold-ins)
+          "mix_ins": string (optional: short ingredient detail — e.g. "Add-in: choco flakes.", "No add-ins. Fold-in: caramel + cookie var.", "Base: banana puree."),
+          "section_label": string (optional: ONLY on the FIRST run of a new logical section, e.g. "Conditional TA", "Identical-pair chains", "Coffee family chain", "Nuts — end of day", "Fold-in block (0 TAs)", "Plain base — mild sweet block")
         }
       ],
       "summary": {
@@ -129,6 +131,7 @@ You MUST respond with ONLY valid JSON matching this exact schema (no markdown, n
 6. Sequence light → dark within base types
 7. Vegan/dairy-free should run before dairy when possible
 8. Balance workload across machines
+9. Group runs into logical sections and emit a "section_label" on the FIRST run of each section. Sections might be: "Conditional TA", "Identical-pair chains", "Coffee family chain", "Lemon choco chain", "Peanut handling → nuts", "Nuts — end of day", "Fold-in block (0 TAs)", "Plain base — mild sweet block", "Plain base — bold flavors", "Chocolate base chain". Use the most descriptive label for the actual contents.
 
 Optimize for fewest total take-aparts while respecting all safety and allergen rules.`;
 }
