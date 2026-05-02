@@ -36,6 +36,8 @@ export async function saveRules(rules: unknown) {
   const blob = await put(RULES_KEY, JSON.stringify(rules, null, 2), {
     access: "public",
     contentType: "application/json",
+    allowOverwrite: true,
+    addRandomSuffix: false,
   });
   return blob;
 }
@@ -43,6 +45,12 @@ export async function saveRules(rules: unknown) {
 export async function getRules(): Promise<unknown | null> {
   const result = await list({ prefix: "rules/" });
   if (result.blobs.length === 0) return null;
-  const response = await fetch(result.blobs[0].url);
+  // Prefer the canonical key if present, else fall back to most recent.
+  const canonical = result.blobs.find((b) => b.pathname === RULES_KEY);
+  const target = canonical ?? result.blobs[0];
+  // Cache-bust because Blob URLs cache aggressively at the CDN.
+  const response = await fetch(`${target.url}?t=${Date.now()}`, {
+    cache: "no-store",
+  });
   return response.json();
 }

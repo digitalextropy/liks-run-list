@@ -1,9 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import ValidationReport from "@/components/ValidationReport";
 import RunListTable from "@/components/RunListTable";
-import type { ValidationResult } from "@/lib/recipe-schema";
+import type { Recipe, ValidationResult } from "@/lib/recipe-schema";
 import type { RunListOutput } from "@/lib/claude";
 
 interface ParsedRecipe {
@@ -50,6 +49,18 @@ function parseInput(raw: string): { recipes: ParsedRecipe[]; errors: string[] } 
   return { recipes, errors };
 }
 
+function stubRecipe(name: string): Recipe {
+  return {
+    name,
+    base: { type: "plain", ingredients: [] },
+    addIns: [],
+    foldIns: [],
+    allergens: [],
+    eligible44qt: true,
+    notes: null,
+  };
+}
+
 export default function GeneratePage() {
   const [input, setInput] = useState("");
   const [machines, setMachines] = useState<Record<(typeof MACHINE_OPTIONS)[number], boolean>>({
@@ -57,18 +68,17 @@ export default function GeneratePage() {
     "Batch B": true,
     "44 QT": true,
   });
-  const [parseErrors, setParseErrors] = useState<string[]>([]);
   const [validationResults, setValidationResults] = useState<ValidationResult[] | null>(null);
+  const [warnings, setWarnings] = useState<string[]>([]);
   const [runList, setRunList] = useState<RunListOutput | null>(null);
   const [loading, setLoading] = useState(false);
-  const [generating, setGenerating] = useState(false);
   const [error, setError] = useState("");
 
   const parsed = parseInput(input);
   const totalTubs = parsed.recipes.reduce((sum, r) => sum + r.tubs, 0);
   const selectedMachines = MACHINE_OPTIONS.filter((m) => machines[m]);
 
-  async function handleValidate() {
+  async function handleGenerate() {
     if (parsed.recipes.length === 0) {
       setError("Paste at least one recipe row");
       return;
@@ -80,77 +90,81 @@ export default function GeneratePage() {
 
     setLoading(true);
     setError("");
-    setParseErrors(parsed.errors);
+    setWarnings([]);
     setValidationResults(null);
     setRunList(null);
 
+    // Try to validate against the uploaded PDF, but don't block on failure.
+    let validated: ValidationResult[] | null = null;
     try {
       const res = await fetch("/api/validate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ recipes: parsed.recipes }),
       });
-      const data = await res.json().catch(() => null);
-      if (!res.ok) {
-        setError(
-          (data && data.error) ||
-            `Validation failed (${res.status}). ${data?.details ? data.details : "No PDF uploaded yet? Go to Admin → Recipes to upload."}`
-        );
-        return;
+      if (res.ok) {
+        const data = await res.json();
+        validated = data.results;
+      } else {
+        const data = await res.json().catch(() => null);
+        const detail = data?.error || data?.details || `status ${res.status}`;
+        setWarnings([
+          `Recipe lookup unavailable (${detail}). Generating without PDF cross-check.`,
+        ]);
       }
-      setValidationResults(data.results);
     } catch (e) {
-      setError(`Network error: ${e instanceof Error ? e.message : String(e)}`);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function handleGenerate() {
-    if (!validationResults) return;
-    const validRecipes = validationResults
-      .filter((r) => (r.status === "matched" || r.status === "ambiguous") && r.matchedRecipe);
-
-    if (validRecipes.length === 0) {
-      setError("No valid recipes to generate from");
-      return;
+      setWarnings([
+        `Recipe lookup failed (${e instanceof Error ? e.message : String(e)}). Generating without PDF cross-check.`,
+      ]);
     }
 
-    setGenerating(true);
-    setError("");
+    // Build recipe payload — use matched data when we have it, stub otherwise.
+    const payload = parsed.recipes.map((r) => {
+      const match = validated?.find(
+        (v) => v.recipe.toLowerCase() === r.name.toLowerCase()
+      );
+      const recipe =
+        (match && (match.status === "matched" || match.status === "ambiguous")
+          ? match.matchedRecipe
+          : null) || stubRecipe(r.name);
+      return { name: recipe.name, tubs: r.tubs, recipe };
+    });
+
+    if (validated) {
+      const notFound = validated.filter((v) => v.status === "not_found");
+      if (notFound.length > 0) {
+        setWarnings((w) => [
+          ...w,
+          `${notFound.length} recipe(s) not found in PDF: ${notFound
+            .map((v) => v.recipe)
+            .join(", ")}. Generated using just the name — base, add-ins, and allergens are unknown.`,
+        ]);
+      }
+      const ambiguous = validated.filter((v) => v.status === "ambiguous");
+      if (ambiguous.length > 0) {
+        setValidationResults(ambiguous);
+      }
+    }
 
     try {
       const res = await fetch("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          recipes: validRecipes.map((r) => ({
-            name: r.matchedRecipe!.name,
-            tubs: r.tubs,
-            recipe: r.matchedRecipe,
-          })),
-          machines: selectedMachines,
-        }),
+        body: JSON.stringify({ recipes: payload, machines: selectedMachines }),
       });
       const data = await res.json().catch(() => null);
       if (!res.ok) {
-        setError(
-          (data && data.error) ||
-            `Generation failed (${res.status})${data?.details ? `: ${data.details}` : ""}`
-        );
+        const detail = data?.error || data?.details || `status ${res.status}`;
+        setError(`Generation failed: ${detail}`);
         return;
       }
       setRunList(data);
     } catch (e) {
       setError(`Network error: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
-      setGenerating(false);
+      setLoading(false);
     }
   }
-
-  const allValid =
-    validationResults &&
-    validationResults.every((r) => r.status === "matched" || r.status === "ambiguous");
 
   return (
     <div className="space-y-6">
@@ -213,33 +227,17 @@ export default function GeneratePage() {
 
           <div className="flex gap-3 pt-2">
             <button
-              onClick={handleValidate}
+              onClick={handleGenerate}
               disabled={loading || parsed.recipes.length === 0}
               className="bg-indigo-600 text-white px-6 py-2 rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition-colors font-medium"
             >
-              {loading ? "Validating..." : "Validate Recipes"}
+              {loading ? "Generating..." : "Generate Runlist"}
             </button>
           </div>
         </div>
       )}
 
-      {validationResults && !runList && (
-        <div className="bg-white rounded-lg shadow p-6 space-y-4">
-          <h2 className="text-lg font-semibold text-gray-800">Validation Results</h2>
-          <ValidationReport results={validationResults} />
-          {allValid && (
-            <button
-              onClick={handleGenerate}
-              disabled={generating}
-              className="bg-green-600 text-white px-6 py-2 rounded-lg hover:bg-green-700 disabled:opacity-50 transition-colors font-medium"
-            >
-              {generating ? "Generating run list..." : "Generate Run List"}
-            </button>
-          )}
-        </div>
-      )}
-
-      {generating && (
+      {loading && (
         <div className="bg-white rounded-lg shadow p-8 text-center">
           <div className="animate-spin h-8 w-8 border-4 border-indigo-200 border-t-indigo-600 rounded-full mx-auto mb-4"></div>
           <p className="text-gray-600">Optimizing production sequence...</p>
@@ -251,6 +249,25 @@ export default function GeneratePage() {
 
       {runList && (
         <div className="space-y-4">
+          {warnings.length > 0 && (
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 space-y-1">
+              {warnings.map((w, i) => (
+                <p key={i} className="text-sm text-amber-800">⚠ {w}</p>
+              ))}
+            </div>
+          )}
+          {validationResults && validationResults.length > 0 && (
+            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-sm text-yellow-800">
+              <p className="font-medium mb-1">Possible name mismatches:</p>
+              <ul className="space-y-0.5">
+                {validationResults.map((v, i) => (
+                  <li key={i}>
+                    "{v.recipe}" matched as "{v.matchedRecipe?.name}"
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           <div className="flex items-center justify-between">
             <h2 className="text-lg font-semibold text-gray-800">Run List</h2>
             <div className="flex gap-2">
@@ -264,6 +281,7 @@ export default function GeneratePage() {
                 onClick={() => {
                   setRunList(null);
                   setValidationResults(null);
+                  setWarnings([]);
                 }}
                 className="text-sm bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded hover:bg-indigo-100 transition-colors"
               >

@@ -45,7 +45,10 @@ export async function parsePdfBuffer(buffer: Buffer): Promise<Recipe[]> {
 }
 
 export async function parsePdfFromUrl(url: string): Promise<Recipe[]> {
-  const response = await fetch(url);
+  const response = await fetch(`${url}?t=${Date.now()}`, { cache: "no-store" });
+  if (!response.ok) {
+    throw new Error(`Failed to fetch PDF (${response.status})`);
+  }
   const buffer = Buffer.from(await response.arrayBuffer());
   return parsePdfBuffer(buffer);
 }
