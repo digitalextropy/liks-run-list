@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type {
   ProductionRules,
   Machine,
@@ -105,10 +105,7 @@ export default function AdminRulesPage() {
 
   return (
     <div className="space-y-6 max-w-4xl pb-24">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-gray-900">Edit Production Rules</h1>
-        <p className="text-xs text-gray-500">Click any row to edit · × to delete · + to add</p>
-      </div>
+      <h1 className="text-2xl font-bold text-gray-900">Edit Production Rules</h1>
 
       {/* MACHINES */}
       <Section
@@ -737,16 +734,16 @@ function EditableRow({
   compact?: boolean;
   hideDelete?: boolean;
 }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useClickOutside(ref, editing, onClose);
+
   if (editing) {
     return (
-      <div className={`group flex items-start gap-2 ${compact ? "py-1" : "py-2"} bg-indigo-50 -mx-2 px-2 rounded border border-indigo-200`}>
+      <div
+        ref={ref}
+        className={`group flex items-start gap-2 ${compact ? "py-1" : "py-2"} bg-indigo-50 -mx-2 px-2 rounded border border-indigo-200`}
+      >
         <div className="flex-1">{children}</div>
-        <button
-          onClick={onClose}
-          className="text-xs text-indigo-700 font-medium hover:text-indigo-900 px-2 py-1 shrink-0"
-        >
-          Done
-        </button>
       </div>
     );
   }
@@ -772,6 +769,27 @@ function EditableRow({
   );
 }
 
+function useClickOutside(
+  ref: React.RefObject<HTMLElement | null>,
+  active: boolean,
+  onOutside: () => void
+) {
+  useEffect(() => {
+    if (!active) return;
+    function handler(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        onOutside();
+      }
+    }
+    // delay one tick so the click that opened the editor doesn't immediately close it
+    const t = setTimeout(() => document.addEventListener("mousedown", handler), 0);
+    return () => {
+      clearTimeout(t);
+      document.removeEventListener("mousedown", handler);
+    };
+  }, [ref, active, onOutside]);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Editable card (block / grid)
 
@@ -791,18 +809,13 @@ function EditableCard({
   cardClass?: string;
 }) {
   const base = cardClass || "bg-white border";
+  const ref = useRef<HTMLDivElement>(null);
+  useClickOutside(ref, editing, onClose);
+
   if (editing) {
     return (
-      <div className={`relative ${base} rounded-lg p-3 ring-2 ring-indigo-400`}>
+      <div ref={ref} className={`relative ${base} rounded-lg p-3 ring-2 ring-indigo-400`}>
         {children}
-        <div className="flex justify-end mt-2">
-          <button
-            onClick={onClose}
-            className="text-xs text-indigo-700 font-medium hover:text-indigo-900 px-2 py-1"
-          >
-            Done
-          </button>
-        </div>
       </div>
     );
   }

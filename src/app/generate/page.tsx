@@ -90,15 +90,17 @@ export default function GeneratePage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ recipes: parsed.recipes }),
       });
+      const data = await res.json().catch(() => null);
       if (!res.ok) {
-        const data = await res.json();
-        setError(data.error || "Validation failed");
+        setError(
+          (data && data.error) ||
+            `Validation failed (${res.status}). ${data?.details ? data.details : "No PDF uploaded yet? Go to Admin → Recipes to upload."}`
+        );
         return;
       }
-      const data = await res.json();
       setValidationResults(data.results);
-    } catch {
-      setError("Failed to connect to server");
+    } catch (e) {
+      setError(`Network error: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setLoading(false);
     }
@@ -130,15 +132,17 @@ export default function GeneratePage() {
           machines: selectedMachines,
         }),
       });
+      const data = await res.json().catch(() => null);
       if (!res.ok) {
-        const data = await res.json();
-        setError(data.error || "Generation failed");
+        setError(
+          (data && data.error) ||
+            `Generation failed (${res.status})${data?.details ? `: ${data.details}` : ""}`
+        );
         return;
       }
-      const data = await res.json();
       setRunList(data);
-    } catch {
-      setError("Failed to generate run list");
+    } catch (e) {
+      setError(`Network error: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setGenerating(false);
     }
