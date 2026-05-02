@@ -154,8 +154,10 @@ export default function GeneratePage() {
       });
       const data = await res.json().catch(() => null);
       if (!res.ok) {
-        const detail = data?.error || data?.details || `status ${res.status}`;
-        setError(`Generation failed: ${detail}`);
+        const parts = [data?.error, data?.details].filter(Boolean);
+        setError(
+          `Generation failed (${res.status}): ${parts.join(" — ") || "no detail"}`
+        );
         return;
       }
       setRunList(data);

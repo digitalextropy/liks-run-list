@@ -154,7 +154,7 @@ Total tubs: ${recipes.reduce((sum, r) => sum + r.tubs, 0)}
 Assign to machines and sequence optimally. Return JSON only.`;
 
   const response = await client.messages.create({
-    model: "claude-sonnet-4-20250514",
+    model: "claude-sonnet-4-6",
     max_tokens: 8000,
     system: systemPrompt,
     messages: [{ role: "user", content: userMessage }],
@@ -162,7 +162,17 @@ Assign to machines and sequence optimally. Return JSON only.`;
 
   const text = response.content[0].type === "text" ? response.content[0].text : "";
   const jsonMatch = text.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) throw new Error("Failed to parse Claude response as JSON");
+  if (!jsonMatch) {
+    throw new Error(
+      `Claude returned no JSON. Raw response: ${text.slice(0, 300)}`
+    );
+  }
 
-  return JSON.parse(jsonMatch[0]) as RunListOutput;
+  try {
+    return JSON.parse(jsonMatch[0]) as RunListOutput;
+  } catch (e) {
+    throw new Error(
+      `Claude returned invalid JSON: ${e instanceof Error ? e.message : String(e)}`
+    );
+  }
 }
