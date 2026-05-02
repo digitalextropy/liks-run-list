@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server";
-import { getRecipePdfUrl } from "@/lib/blob";
+import {
+  getRecipePdfUrl,
+  getParsedRecipes,
+  saveParsedRecipes,
+} from "@/lib/blob";
 import { parsePdfFromUrl, fuzzyMatchRecipe } from "@/lib/pdf-parser";
 import type { ValidationResult } from "@/lib/recipe-schema";
 
@@ -9,25 +13,28 @@ export async function POST(request: Request) {
       recipes: { name: string; tubs: number }[];
     };
 
-    const pdfUrl = await getRecipePdfUrl();
-    if (!pdfUrl) {
-      return NextResponse.json(
-        { error: "No recipe PDF uploaded yet. Go to Admin → Recipes to upload one." },
-        { status: 404 }
-      );
-    }
-
-    let knownRecipes;
-    try {
-      knownRecipes = await parsePdfFromUrl(pdfUrl);
-    } catch (e) {
-      return NextResponse.json(
-        {
-          error: "Failed to parse recipe PDF",
-          details: e instanceof Error ? e.message : String(e),
-        },
-        { status: 500 }
-      );
+    // Try the cache first; fall back to parsing the PDF on demand.
+    let knownRecipes = await getParsedRecipes();
+    if (!knownRecipes) {
+      const pdfUrl = await getRecipePdfUrl();
+      if (!pdfUrl) {
+        return NextResponse.json(
+          { error: "No recipe PDF uploaded yet. Go to Recipes to upload one." },
+          { status: 404 }
+        );
+      }
+      try {
+        knownRecipes = await parsePdfFromUrl(pdfUrl);
+        await saveParsedRecipes(knownRecipes);
+      } catch (e) {
+        return NextResponse.json(
+          {
+            error: "Failed to parse recipe PDF",
+            details: e instanceof Error ? e.message : String(e),
+          },
+          { status: 500 }
+        );
+      }
     }
 
     if (knownRecipes.length === 0) {

@@ -874,6 +874,7 @@ function MachineForm({
     <div className="space-y-2">
       <Field label="Name">
         <input
+          autoFocus
           value={value.name}
           onChange={(e) => onChange({ ...value, name: e.target.value })}
           className="w-full px-2 py-1 border rounded text-sm mt-0.5"
@@ -923,6 +924,7 @@ function CleaningTierForm({
   return (
     <div className="grid grid-cols-12 gap-2 flex-1">
       <input
+        autoFocus
         value={value.name}
         onChange={(e) => onChange({ ...value, name: e.target.value })}
         placeholder="Name"
@@ -969,6 +971,7 @@ function TATriggerForm({
   return (
     <div className="flex gap-2 flex-1">
       <input
+        autoFocus
         value={value.ingredient}
         onChange={(e) => onChange({ ...value, ingredient: e.target.value })}
         placeholder="Ingredient"
@@ -1008,6 +1011,7 @@ function AllergenForm({
     <div className="space-y-2">
       <Field label="Allergen">
         <input
+          autoFocus
           value={value.allergen}
           onChange={(e) => onChange({ ...value, allergen: e.target.value })}
           className="w-full px-2 py-1 border rounded text-sm mt-0.5"
@@ -1042,6 +1046,7 @@ function SequencingForm({
   return (
     <div className="grid grid-cols-12 gap-2 flex-1">
       <input
+        autoFocus
         value={value.category}
         onChange={(e) => onChange({ ...value, category: e.target.value })}
         placeholder="Category"
@@ -1077,6 +1082,7 @@ function OptimizationForm({
     <div className="space-y-2 flex-1">
       <Field label="Name">
         <input
+          autoFocus
           value={value.name}
           onChange={(e) => onChange({ ...value, name: e.target.value })}
           className="w-full px-2 py-1 border rounded text-sm mt-0.5"
@@ -1112,6 +1118,7 @@ function RecipeNoteForm({
     <div className="space-y-2">
       <Field label="Recipe">
         <input
+          autoFocus
           value={value.recipe}
           onChange={(e) => onChange({ ...value, recipe: e.target.value })}
           className="w-full px-2 py-1 border rounded text-sm mt-0.5"
@@ -1146,6 +1153,7 @@ function DayStructureForm({
   return (
     <div className="grid grid-cols-12 gap-2 flex-1">
       <input
+        autoFocus
         type="number"
         value={value.order}
         onChange={(e) => onChange({ ...value, order: parseInt(e.target.value) || 0 })}
