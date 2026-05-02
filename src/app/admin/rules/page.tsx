@@ -15,25 +15,72 @@ import type {
 
 type EditingKey = string | null;
 
+type SaveState = "idle" | "saving" | "saved" | "error";
+
 export default function AdminRulesPage() {
   const [rules, setRules] = useState<ProductionRules | null>(null);
-  const [original, setOriginal] = useState<string>("");
+  const [savedSnapshot, setSavedSnapshot] = useState<string>("");
   const [editing, setEditing] = useState<EditingKey>(null);
-  const [saving, setSaving] = useState(false);
   const [seeding, setSeeding] = useState(false);
-  const [message, setMessage] = useState("");
+  const [seedMessage, setSeedMessage] = useState("");
+  const [saveState, setSaveState] = useState<SaveState>("idle");
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const inFlight = useRef(false);
 
   useEffect(() => {
     fetch("/api/rules")
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
         setRules(data);
-        setOriginal(JSON.stringify(data));
+        setSavedSnapshot(JSON.stringify(data));
       })
       .catch(() => {});
   }, []);
 
-  const dirty = rules !== null && JSON.stringify(rules) !== original;
+  // Debounced autosave whenever rules change
+  useEffect(() => {
+    if (!rules) return;
+    const current = JSON.stringify(rules);
+    if (current === savedSnapshot) return;
+
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      void persist(current);
+    }, 600);
+
+    return () => {
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rules]);
+
+  async function persist(snapshot: string) {
+    if (inFlight.current) {
+      // queue another save after the current one finishes
+      saveTimer.current = setTimeout(() => persist(JSON.stringify(rules)), 200);
+      return;
+    }
+    inFlight.current = true;
+    setSaveState("saving");
+    try {
+      const res = await fetch("/api/rules", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: snapshot,
+      });
+      if (res.ok) {
+        setSavedSnapshot(snapshot);
+        setSaveState("saved");
+        setTimeout(() => setSaveState((s) => (s === "saved" ? "idle" : s)), 1500);
+      } else {
+        setSaveState("error");
+      }
+    } catch {
+      setSaveState("error");
+    } finally {
+      inFlight.current = false;
+    }
+  }
 
   async function handleSeed() {
     setSeeding(true);
@@ -42,43 +89,12 @@ export default function AdminRulesPage() {
       const r = await fetch("/api/rules");
       const data = await r.json();
       setRules(data);
-      setOriginal(JSON.stringify(data));
-      setMessage("Rules seeded.");
+      setSavedSnapshot(JSON.stringify(data));
+      setSeedMessage("Rules seeded.");
     } else {
-      setMessage("Seed failed.");
+      setSeedMessage("Seed failed.");
     }
     setSeeding(false);
-  }
-
-  async function handleSave() {
-    if (!rules) return;
-    setSaving(true);
-    setMessage("");
-    try {
-      const res = await fetch("/api/rules", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(rules),
-      });
-      if (res.ok) {
-        setOriginal(JSON.stringify(rules));
-        setEditing(null);
-        setMessage("Saved.");
-        setTimeout(() => setMessage(""), 2000);
-      } else {
-        setMessage("Save failed.");
-      }
-    } catch {
-      setMessage("Save failed.");
-    }
-    setSaving(false);
-  }
-
-  function handleDiscard() {
-    if (!original) return;
-    setRules(JSON.parse(original));
-    setEditing(null);
-    setMessage("");
   }
 
   function update<K extends keyof ProductionRules>(key: K, value: ProductionRules[K]) {
@@ -98,14 +114,17 @@ export default function AdminRulesPage() {
         >
           {seeding ? "Seeding..." : "Seed Initial Rules"}
         </button>
-        {message && <p className="text-sm text-green-600">{message}</p>}
+        {seedMessage && <p className="text-sm text-green-600">{seedMessage}</p>}
       </div>
     );
   }
 
   return (
-    <div className="space-y-6 max-w-4xl pb-24">
-      <h1 className="text-2xl font-bold text-gray-900">Edit Production Rules</h1>
+    <div className="space-y-6 max-w-4xl">
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold text-gray-900">Edit Production Rules</h1>
+        <SaveIndicator state={saveState} />
+      </div>
 
       {/* MACHINES */}
       <Section
@@ -634,45 +653,30 @@ export default function AdminRulesPage() {
         </div>
       </Section>
 
-      {/* SAVE BAR */}
-      {(dirty || message) && (
-        <div className="fixed bottom-0 left-0 right-0 bg-white border-t shadow-lg z-40">
-          <div className="max-w-4xl mx-auto px-4 py-3 flex items-center justify-between">
-            <span className="text-sm">
-              {message && (
-                <span
-                  className={
-                    message.includes("failed") ? "text-red-600" : "text-green-600"
-                  }
-                >
-                  {message}
-                </span>
-              )}
-              {dirty && !message && (
-                <span className="text-amber-600 font-medium">Unsaved changes</span>
-              )}
-            </span>
-            <div className="flex gap-2">
-              {dirty && (
-                <button
-                  onClick={handleDiscard}
-                  className="px-4 py-2 text-sm text-gray-600 hover:text-gray-900"
-                >
-                  Discard
-                </button>
-              )}
-              <button
-                onClick={handleSave}
-                disabled={saving || !dirty}
-                className="bg-green-600 text-white px-5 py-2 rounded-lg hover:bg-green-700 disabled:opacity-50 font-medium text-sm"
-              >
-                {saving ? "Saving..." : "Save Rules"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
+  );
+}
+
+function SaveIndicator({ state }: { state: SaveState }) {
+  if (state === "idle") return null;
+  const styles = {
+    saving: "text-gray-500",
+    saved: "text-green-600",
+    error: "text-red-600",
+  } as const;
+  const label = {
+    saving: "Saving…",
+    saved: "Saved",
+    error: "Save failed",
+  } as const;
+  return (
+    <span className={`text-xs font-medium ${styles[state]}`}>
+      {state === "saving" && (
+        <span className="inline-block w-2 h-2 mr-1.5 rounded-full bg-gray-400 animate-pulse"></span>
+      )}
+      {state === "saved" && <span className="mr-1">✓</span>}
+      {label[state]}
+    </span>
   );
 }
 

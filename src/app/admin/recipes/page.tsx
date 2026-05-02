@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
+import { upload } from "@vercel/blob/client";
 
 interface PdfInfo {
   url: string;
@@ -11,9 +12,13 @@ interface PdfInfo {
 export default function AdminRecipesPage() {
   const [pdfInfo, setPdfInfo] = useState<PdfInfo | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [progress, setProgress] = useState(0);
   const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
   const [recipeCount, setRecipeCount] = useState<number | null>(null);
   const [recipes, setRecipes] = useState<{ name: string }[] | null>(null);
+  const [dragActive, setDragActive] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     fetchPdfInfo();
@@ -24,12 +29,13 @@ export default function AdminRecipesPage() {
     try {
       const res = await fetch("/api/recipes/info");
       if (res.ok) {
-        const data = await res.json();
-        setPdfInfo(data);
+        setPdfInfo(await res.json());
       } else {
         setPdfInfo(null);
       }
-    } catch { /* no pdf yet */ }
+    } catch {
+      /* no pdf yet */
+    }
   }
 
   async function fetchRecipes() {
@@ -40,36 +46,74 @@ export default function AdminRecipesPage() {
         setRecipeCount(data.count);
         setRecipes(data.recipes);
       }
-    } catch { /* no pdf yet */ }
+    } catch {
+      /* no pdf yet */
+    }
   }
 
-  async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  async function processFile(file: File) {
+    if (file.type !== "application/pdf") {
+      setError("File must be a PDF");
+      return;
+    }
 
     setUploading(true);
+    setProgress(0);
+    setError("");
     setMessage("");
 
-    const formData = new FormData();
-    formData.append("file", file);
-
     try {
-      const res = await fetch("/api/recipes/upload", { method: "POST", body: formData });
-      const data = await res.json();
+      const blob = await upload(`recipes/${file.name}`, file, {
+        access: "public",
+        handleUploadUrl: "/api/recipes/upload-token",
+        contentType: "application/pdf",
+        onUploadProgress: (p) => setProgress(Math.round(p.percentage)),
+      });
 
-      if (res.ok) {
-        setMessage(`Uploaded ${data.filename}. Found ${data.recipeCount} recipes.`);
-        setRecipeCount(data.recipeCount);
-        await fetchPdfInfo();
-        await fetchRecipes();
-      } else {
-        setMessage(data.error || "Upload failed");
-      }
-    } catch {
-      setMessage("Upload failed");
+      // Clean up any old PDFs (keep only the one we just uploaded)
+      await fetch("/api/recipes/cleanup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ keepUrl: blob.url }),
+      });
+
+      setMessage(`Uploaded ${file.name}. Parsing recipes...`);
+      await fetchPdfInfo();
+      await fetchRecipes();
+      setMessage(`Uploaded ${file.name}.`);
+    } catch (e) {
+      setError(`Upload failed: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setUploading(false);
+      setProgress(0);
     }
+  }
+
+  function handleFileInput(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (file) processFile(file);
+    // reset so picking the same file again still triggers onChange
+    if (inputRef.current) inputRef.current.value = "";
+  }
+
+  function handleDrop(e: React.DragEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragActive(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) processFile(file);
+  }
+
+  function handleDragOver(e: React.DragEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!dragActive) setDragActive(true);
+  }
+
+  function handleDragLeave(e: React.DragEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragActive(false);
   }
 
   return (
@@ -115,24 +159,57 @@ export default function AdminRecipesPage() {
         <h3 className="text-sm font-semibold text-gray-700 mb-2">
           {pdfInfo ? "Replace PDF" : "Upload PDF"}
         </h3>
-        <label className="block border-2 border-dashed border-gray-300 rounded-lg p-8 text-center cursor-pointer hover:border-indigo-400 transition-colors">
+
+        <label
+          onDrop={handleDrop}
+          onDragOver={handleDragOver}
+          onDragEnter={handleDragOver}
+          onDragLeave={handleDragLeave}
+          className={`block border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors ${
+            dragActive
+              ? "border-indigo-500 bg-indigo-50"
+              : uploading
+              ? "border-gray-200 bg-gray-50 cursor-wait"
+              : "border-gray-300 hover:border-indigo-400"
+          }`}
+        >
           <input
+            ref={inputRef}
             type="file"
-            accept=".pdf"
-            onChange={handleUpload}
+            accept="application/pdf,.pdf"
+            onChange={handleFileInput}
             className="hidden"
             disabled={uploading}
           />
-          <p className="text-gray-500">
-            {uploading ? "Uploading..." : "Click or drag to upload recipe PDF"}
-          </p>
-          <p className="text-xs text-gray-400 mt-1">PDF only. Replaces any existing recipe file.</p>
+          {uploading ? (
+            <>
+              <p className="text-gray-600 text-sm">Uploading... {progress}%</p>
+              <div className="mt-2 h-1.5 w-full bg-gray-200 rounded overflow-hidden">
+                <div
+                  className="h-full bg-indigo-500 transition-all"
+                  style={{ width: `${progress}%` }}
+                />
+              </div>
+            </>
+          ) : (
+            <>
+              <p className="text-gray-500">
+                {dragActive
+                  ? "Drop PDF to upload"
+                  : "Click or drag a PDF here to upload"}
+              </p>
+              <p className="text-xs text-gray-400 mt-1">
+                Replaces the current recipe file.
+              </p>
+            </>
+          )}
         </label>
 
-        {message && (
-          <p className={`mt-3 text-sm ${message.includes("failed") ? "text-red-500" : "text-green-600"}`}>
-            {message}
-          </p>
+        {error && (
+          <p className="mt-3 text-sm text-red-600 bg-red-50 px-3 py-2 rounded">{error}</p>
+        )}
+        {message && !error && (
+          <p className="mt-3 text-sm text-green-600">{message}</p>
         )}
       </div>
 
