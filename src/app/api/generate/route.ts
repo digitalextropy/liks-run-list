@@ -5,8 +5,9 @@ import type { ProductionRules } from "@/lib/rules-schema";
 import type { Recipe } from "@/lib/recipe-schema";
 
 export async function POST(request: Request) {
-  const { recipes } = await request.json() as {
+  const { recipes, machines } = await request.json() as {
     recipes: { name: string; tubs: number; recipe: Recipe }[];
+    machines?: string[];
   };
 
   if (!recipes || recipes.length === 0) {
@@ -18,8 +19,16 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Production rules not configured. Seed rules first." }, { status: 500 });
   }
 
+  const filteredRules: ProductionRules = machines && machines.length > 0
+    ? { ...rules, machines: rules.machines.filter((m) => machines.includes(m.name)) }
+    : rules;
+
+  if (filteredRules.machines.length === 0) {
+    return NextResponse.json({ error: "No matching machines selected" }, { status: 400 });
+  }
+
   try {
-    const runList = await generateRunList(recipes, rules);
+    const runList = await generateRunList(recipes, filteredRules);
     return NextResponse.json(runList);
   } catch (error) {
     return NextResponse.json(
