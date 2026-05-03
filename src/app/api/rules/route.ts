@@ -2,6 +2,18 @@ import { NextResponse } from "next/server";
 import { getRules, saveRules } from "@/lib/blob";
 import type { ProductionRules } from "@/lib/rules-schema";
 
+const DEFAULT_CRITICAL_RULES = [
+  "Minimize take-aparts by chaining same-ingredient flavors consecutively.",
+  "Nuts and peanuts MUST go at end of day (last runs on every machine).",
+  "Cotton candy always requires a full Rinse before AND after — not a TA, not a Water Rinse.",
+  "44 QT machine CANNOT run fold-in recipes — volume too large for quality hand-stirring.",
+  "Sorbet and sherbet are NOT eligible for 44 QT — high water content causes very long freeze times.",
+  "Sequence flavors light to dark within each base type on the same machine.",
+  "Vegan and dairy-free recipes must run before any dairy recipes on the same machine.",
+  "Balance workload across machines — avoid assigning all volume to one machine.",
+  "Group runs into logical sections and label the first run of each section with a 'section_label' (e.g. 'Coffee family chain', 'Nuts — end of day', 'Fold-in block (0 TAs)', 'Plain base — mild sweet block'). Use descriptive labels that reflect the actual contents.",
+];
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function migrate(raw: any): ProductionRules {
   if (!raw || typeof raw !== "object") raw = {};
@@ -67,7 +79,7 @@ function migrate(raw: any): ProductionRules {
 
     recipe_notes: Array.isArray(raw.recipe_notes) ? raw.recipe_notes : [],
     day_structure: Array.isArray(raw.day_structure) ? raw.day_structure : [],
-    critical_rules: Array.isArray(raw.critical_rules) ? raw.critical_rules : [],
+    critical_rules: Array.isArray(raw.critical_rules) ? raw.critical_rules : DEFAULT_CRITICAL_RULES,
   };
 }
 
