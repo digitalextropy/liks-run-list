@@ -184,30 +184,38 @@ export interface RunListOutput {
   _retried?: boolean;
 }
 
+function callouts(list: { type: string; text: string }[]): string {
+  return list.map((c) => `[${c.type.toUpperCase()}] ${c.text}`).join("\n");
+}
+
 function buildSystemPrompt(rules: ProductionRules): string {
   return `You are an expert ice cream production scheduler for Liks Ice Cream. Your job is to take a list of recipes with tub counts and produce an optimized production run list across the available machines.
 
 ## MACHINES
 ${JSON.stringify(rules.machines, null, 2)}
+${rules.machines_callouts?.length ? callouts(rules.machines_callouts) : ""}
 
 ## CLEANING TIERS
 ${JSON.stringify(rules.cleaning_tiers, null, 2)}
+${rules.cleaning_tiers_callouts?.length ? callouts(rules.cleaning_tiers_callouts) : ""}
 
 ## TAKE-APART TRIGGERS
-${JSON.stringify(rules.ta_triggers, null, 2)}
+${rules.ta_triggers_callouts_top?.length ? callouts(rules.ta_triggers_callouts_top) + "\n" : ""}${JSON.stringify(rules.ta_triggers, null, 2)}
+${rules.ta_triggers_dissolving_intro ? rules.ta_triggers_dissolving_intro + "\n" : ""}${rules.ta_triggers_callouts_bottom?.length ? callouts(rules.ta_triggers_callouts_bottom) : ""}
 
 ## ALLERGEN SEQUENCING RULES
-${JSON.stringify(rules.allergen_rules, null, 2)}
+${rules.allergen_rules.map((r) => `- ${r}`).join("\n")}
+${rules.allergen_rules_callouts?.length ? callouts(rules.allergen_rules_callouts) : ""}
 
 ## FLAVOR & BASE SEQUENCING
-${JSON.stringify(rules.sequencing_rules, null, 2)}
+${rules.sequencing_rules.map((r) => `- ${r}`).join("\n")}
 
 ## OPTIMIZATION RULES
-${JSON.stringify(rules.optimization_rules, null, 2)}
+${rules.optimization_rules.map((r) => `- ${r}`).join("\n")}
 
 ## 44 QT MACHINE RULES
 ${rules.forty_four_qt_rule}
-${(rules.forty_four_qt_callouts || []).map((c) => `- (${c.type.toUpperCase()}) ${c.text}`).join("\n")}
+${rules.forty_four_qt_callouts?.length ? callouts(rules.forty_four_qt_callouts) : ""}
 
 ## RECIPE-SPECIFIC NOTES
 ${JSON.stringify(rules.recipe_notes, null, 2)}
@@ -215,12 +223,15 @@ ${JSON.stringify(rules.recipe_notes, null, 2)}
 ## DAY STRUCTURE
 ${JSON.stringify(rules.day_structure, null, 2)}
 
+## CRITICAL RULES
+${(rules.critical_rules || []).map((r, i) => `${i + 1}. ${r}`).join("\n")}
+
 ## OUTPUT FORMAT
 You MUST respond with ONLY valid JSON matching this exact schema (no markdown, no explanation):
 {
   "machines": [
     {
-      "name": "Batch A" | "Batch B" | "44 QT",
+      "name": string,
       "capacity_gallons": number,
       "tubs_per_run": number,
       "runs": [
@@ -229,46 +240,20 @@ You MUST respond with ONLY valid JSON matching this exact schema (no markdown, n
           "flavor": string,
           "tubs": number,
           "clean_after": "NO_CLEAN" | "WATER_RINSE" | "RINSE" | "TAKE_APART",
-          "reason": string (BRIEF — under 60 chars when possible — e.g. "Cookie pieces — nothing similar follows.", "Identical — skip.", "Mint→coffee = major change."),
+          "reason": string,
           "chain_badge": boolean,
-          "chain_label": string (optional: "chain", "×2", "×3"),
-          "flags": string[] (e.g. ["nut", "peanut", "moved", "fix"]),
-          "mix_ins": string (optional: short ingredient detail — e.g. "Add-in: choco flakes.", "No add-ins. Fold-in: caramel + cookie var.", "Base: banana puree."),
-          "section_label": string (optional: ONLY on the FIRST run of a new logical section, e.g. "Conditional TA", "Identical-pair chains", "Coffee family chain", "Nuts — end of day", "Fold-in block (0 TAs)", "Plain base — mild sweet block")
+          "chain_label": string (optional),
+          "flags": string[],
+          "mix_ins": string (optional),
+          "section_label": string (optional — ONLY on the first run of a new logical section)
         }
       ],
-      "summary": {
-        "total_runs": number,
-        "total_tubs": number,
-        "take_aparts": number,
-        "rinses": number,
-        "water_rinses": number,
-        "no_cleans": number
-      },
+      "summary": { "total_runs": number, "total_tubs": number, "take_aparts": number, "rinses": number, "water_rinses": number, "no_cleans": number },
       "footer_note": string
     }
   ],
-  "totals": {
-    "runs": number,
-    "tubs": number,
-    "gallons": number,
-    "take_aparts": number,
-    "rinses": number,
-    "water_rinses": number,
-    "no_cleans": number
-  }
+  "totals": { "runs": number, "tubs": number, "gallons": number, "take_aparts": number, "rinses": number, "water_rinses": number, "no_cleans": number }
 }
-
-## CRITICAL RULES:
-1. Minimize take-aparts by chaining same-ingredient flavors consecutively
-2. Nuts and peanuts MUST go at end of day (last runs)
-3. Cotton candy ALWAYS requires take-apart before AND after
-4. 44 QT machine CANNOT do fold-ins (only add-ins)
-5. Sorbet/sherbet NOT eligible for 44 QT
-6. Sequence light → dark within base types
-7. Vegan/dairy-free should run before dairy when possible
-8. Balance workload across machines
-9. Group runs into logical sections and emit a "section_label" on the FIRST run of each section. Sections might be: "Conditional TA", "Identical-pair chains", "Coffee family chain", "Lemon choco chain", "Peanut handling → nuts", "Nuts — end of day", "Fold-in block (0 TAs)", "Plain base — mild sweet block", "Plain base — bold flavors", "Chocolate base chain". Use the most descriptive label for the actual contents.
 
 Optimize for fewest total take-aparts while respecting all safety and allergen rules.`;
 }

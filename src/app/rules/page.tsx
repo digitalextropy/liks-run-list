@@ -426,6 +426,25 @@ export default function RulesPage() {
         </div>
       </Section>
 
+      {/* CRITICAL RULES */}
+      <Section
+        icon="🚨"
+        iconColor="#991b1b"
+        iconBg="#fef2f2"
+        title="Critical Rules"
+        onAdd={() => update("critical_rules", [...(rules.critical_rules || []), "New rule"])}
+      >
+        <p className="text-xs text-gray-500 -mt-1 mb-2">
+          These are passed to the AI as highest-priority instructions that override everything else. Edit or add rules here to change how the run list is generated.
+        </p>
+        <RuleList
+          items={rules.critical_rules || []}
+          ctx={editorCtx}
+          keyPrefix="cr"
+          onChange={(next) => update("critical_rules", next)}
+        />
+      </Section>
+
       {/* DAY STRUCTURE */}
       <Section
         icon="📅"

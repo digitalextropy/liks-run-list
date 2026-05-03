@@ -62,4 +62,5 @@ export interface ProductionRules {
 
   recipe_notes: RecipeNote[];
   day_structure: DayPhase[];
+  critical_rules: string[];
 }
