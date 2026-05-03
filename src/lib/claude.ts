@@ -328,15 +328,22 @@ export async function generateRunList(
     })
     .join("\n");
 
+  const machineCapacityLines = rules.machines
+    .map((m) => `  - ${m.name}: exactly ${m.tubs_per_run} tub${m.tubs_per_run === 1 ? "" : "s"} per run`)
+    .join("\n");
+
   const userMessage = `Generate an optimized production run list for the following recipes.
 
 CRITICAL: The tub counts below are non-negotiable. Every single tub must appear in the output.
-- Each machine run produces exactly tubs_per_run tubs (Batch A/B = 2 tubs/run, 44 QT = 4 tubs/run).
-- A flavor assigned to Batch A/B with 4 tubs = 2 consecutive runs of 2 tubs each.
-- A flavor assigned to 44 QT with 4 tubs = exactly 1 run of 4 tubs.
-- A flavor assigned to 44 QT with 8 tubs = exactly 2 runs of 4 tubs each.
-- DO NOT schedule the same flavor on multiple machines unless you split the tubs intentionally and they add up to exactly the requested count.
-- After building the schedule, verify: for each flavor, sum tubs across ALL machines = requested amount exactly.
+
+Machine capacities (tubs per run — from configuration):
+${machineCapacityLines}
+
+Rules for tub counting:
+- Each run produces EXACTLY the machine's tubs_per_run — no partial runs, no rounding.
+- If a flavor needs more tubs than one run holds, schedule multiple consecutive runs on the same machine.
+- DO NOT schedule the same flavor on multiple different machines unless you intentionally split tubs, and that split must sum to exactly the requested count.
+- After building the schedule, verify each flavor: sum of tubs across all runs on all machines = requested amount.
 
 REQUIRED TUB COUNTS (non-negotiable — total across all machines):
 ${tubSummary}

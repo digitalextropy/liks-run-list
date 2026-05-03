@@ -5,7 +5,7 @@ import RunListTable from "@/components/RunListTable";
 import type { Recipe, ValidationResult } from "@/lib/recipe-schema";
 import type { RunListOutput } from "@/lib/claude";
 
-const STORAGE_KEY = "liks-generate-state-v1";
+const STORAGE_KEY = "liks-generate-state-v2";
 
 interface PersistedState {
   input: string;
@@ -15,6 +15,8 @@ interface PersistedState {
   runList: RunListOutput | null;
   pdfVerified: string[];
   warnings: string[];
+  tubAccounting: RunListOutput["_tubAccounting"] | null;
+  totalsCheck: RunListOutput["_totalsCheck"] | null;
 }
 
 function loadPersisted(): Partial<PersistedState> {
@@ -139,6 +141,8 @@ export default function GeneratePage() {
     if (persisted.runList) setRunList(persisted.runList);
     if (persisted.pdfVerified) setPdfVerified(new Set(persisted.pdfVerified));
     if (persisted.warnings) setWarnings(persisted.warnings);
+    if (persisted.tubAccounting !== undefined) setTubAccounting(persisted.tubAccounting);
+    if (persisted.totalsCheck !== undefined) setTotalsCheck(persisted.totalsCheck);
     hydrated.current = true;
   }, []);
 
@@ -153,8 +157,10 @@ export default function GeneratePage() {
       runList,
       pdfVerified: Array.from(pdfVerified),
       warnings,
+      tubAccounting,
+      totalsCheck,
     });
-  }, [input, machines, validated, picks, runList, pdfVerified, warnings]);
+  }, [input, machines, validated, picks, runList, pdfVerified, warnings, tubAccounting, totalsCheck]);
 
   const parsed = parseInput(input);
   const totalTubs = parsed.recipes.reduce((sum, r) => sum + r.tubs, 0);
@@ -542,19 +548,15 @@ function TubAccountingPanel({
   accounting: RunListOutput["_tubAccounting"] | null;
   totalsCheck: RunListOutput["_totalsCheck"] | null;
 }) {
-  const [open, setOpen] = useState(false);
+  const hasMismatch = !!(totalsCheck && (totalsCheck.requested !== totalsCheck.scheduled || accounting?.some((a) => !a.ok)));
+  const [open, setOpen] = useState(hasMismatch);
+
+  // Auto-open when mismatch data arrives
+  useEffect(() => {
+    if (hasMismatch) setOpen(true);
+  }, [hasMismatch]);
 
   if (!accounting || !totalsCheck) return null;
-
-  const hasMismatch = totalsCheck.requested !== totalsCheck.scheduled || accounting.some((a) => !a.ok);
-  const defaultOpen = hasMismatch;
-
-  // Use defaultOpen on mount
-  const wasOpened = useRef(false);
-  if (!wasOpened.current && defaultOpen) {
-    wasOpened.current = true;
-  }
-  const isOpen = open || (defaultOpen && !wasOpened.current === false);
 
   return (
     <div className={`print:hidden rounded-lg border ${hasMismatch ? "border-red-300 bg-red-50" : "border-gray-200 bg-gray-50"}`}>
@@ -587,10 +589,10 @@ function TubAccountingPanel({
             </span>
           )}
         </div>
-        <span className={`text-gray-400 text-sm transition-transform ${open || defaultOpen ? "rotate-180" : ""}`}>▾</span>
+        <span className={`text-gray-400 text-sm transition-transform ${open ? "rotate-180" : ""}`}>▾</span>
       </button>
 
-      {(open || defaultOpen) && (
+      {open && (
         <div className="px-4 pb-3 space-y-2">
           <table className="w-full text-xs">
             <thead>
