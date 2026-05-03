@@ -74,10 +74,10 @@ async function main() {
     const legacyId = toInt(row["ID"]);
     if (!legacyId) continue;
     await pool.query(
-      `INSERT INTO ingredients (legacy_id, item_name, generic_name, item_cost, item_measurement, item_unit, item_unit_qty, item_number, company_name, company_name_2, supplier, active, ingredient_text, allergen_alcohol, allergen_corn_syrup, allergen_egg, allergen_milk, allergen_peanuts, allergen_soy, allergen_sulfites, allergen_tree_nuts, allergen_wheat)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
+      `INSERT INTO ingredients (legacy_id, item_name, generic_name, item_cost, item_measurement, item_unit, item_unit_qty, active, ingredient_text, allergen_alcohol, allergen_corn_syrup, allergen_egg, allergen_milk, allergen_peanuts, allergen_soy, allergen_sulfites, allergen_tree_nuts, allergen_wheat)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
        ON CONFLICT (legacy_id) DO NOTHING`,
-      [legacyId, row["ItemName"] || "", row["GenericName"] || null, toDecimal(row["ItemCost"]), row["ItemMeasurement"] || null, row["ItemUnit"] || null, toInt(row["ItemUnitQty"]), row["xItem Number"] || null, row["xCompany Name2"] || null, row["xCompany Name"] || null, row["xSupplier"] || null, toBool(row["Active"]), row["Ingredient"] || null, toBool(row["Alcohol"]), toBool(row["Corn Syrup"]), toBool(row["Egg"]), toBool(row["Milk and Milk Derivatives"]), toBool(row["Peanuts and Peanut Derivatives"]), toBool(row["Soybean and Soybean Derivatives"]), toBool(row["Sulfites"]), toBool(row["Tree Nuts"]), toBool(row["Wheat and Other Gluten Sources"])]
+      [legacyId, row["ItemName"] || "", row["GenericName"] || null, toDecimal(row["ItemCost"]), row["ItemMeasurement"] || null, row["ItemUnit"] || null, toInt(row["ItemUnitQty"]), toBool(row["Active"]), row["Ingredient"] || null, toBool(row["Alcohol"]), toBool(row["Corn Syrup"]), toBool(row["Egg"]), toBool(row["Milk and Milk Derivatives"]), toBool(row["Peanuts and Peanut Derivatives"]), toBool(row["Soybean and Soybean Derivatives"]), toBool(row["Sulfites"]), toBool(row["Tree Nuts"]), toBool(row["Wheat and Other Gluten Sources"])]
     );
     ingredientCount++;
     if (ingredientCount % 50 === 0) process.stdout.write(`  ${ingredientCount}...\r`);
