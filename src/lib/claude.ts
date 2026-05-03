@@ -349,14 +349,25 @@ function enforceRunCounts(
     for (const [key, req] of machineReqs.entries()) {
       const soFar = seen.get(key) || 0;
       for (let i = soFar; i < req.runs; i++) {
+        const r = req.recipe;
+        const addIns = r.recipe.addIns;
+        const hasTAAddIns = addIns.some((a: { taTrigger: string }) => a.taTrigger === "always");
+        const cleanAfter = hasTAAddIns ? "TAKE_APART" as const : "RINSE" as const;
+        const base = r.recipe.base.type;
+        const addInSummary = addIns.length > 0
+          ? addIns.map((a: { name: string }) => a.name).join(", ")
+          : "no add-ins";
+        const reason = hasTAAddIns
+          ? `${base} base; TA required (${addInSummary})`
+          : `${base} base; ${addInSummary}`;
         fixedRuns.push({
           order: 0,
           flavor: req.recipe.name,
           tubs: perRun,
-          clean_after: "RINSE",
-          reason: "Sequenced by system — verify cleaning step",
+          clean_after: cleanAfter,
+          reason,
           chain_badge: false,
-          flags: ["auto-placed"],
+          flags: [],
         });
         seen.set(key, (seen.get(key) || 0) + 1);
       }
