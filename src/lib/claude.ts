@@ -2,7 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import type { ProductionRules } from "./rules-schema";
 import type { Recipe } from "./recipe-schema";
 import { assignMachines } from "./machine-assigner";
-import type { RecipeRequest } from "./machine-assigner";
+import type { RecipeRequest, AssignedRecipe } from "./machine-assigner";
 export type { RecipeRequest } from "./machine-assigner";
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -267,8 +267,6 @@ function parseRunListJson(text: string): RunListOutput {
 
 // Deterministically enforce correct run counts and tub values.
 // Claude only provides sequencing and cleaning — we own quantities.
-import type { AssignedRecipe } from "./machine-assigner";
-
 function enforceRunCounts(
   result: RunListOutput,
   assigned: AssignedRecipe[],
