@@ -12,6 +12,8 @@ interface ParsedRecipe {
 
 const MACHINE_OPTIONS = ["Batch A", "Batch B", "44 QT"] as const;
 
+const USE_AS_TYPED = "__USE_AS_TYPED__";
+
 function parseInput(raw: string): { recipes: ParsedRecipe[]; errors: string[] } {
   const recipes: ParsedRecipe[] = [];
   const errors: string[] = [];
@@ -68,18 +70,29 @@ export default function GeneratePage() {
     "Batch B": true,
     "44 QT": true,
   });
-  const [validationResults, setValidationResults] = useState<ValidationResult[] | null>(null);
+  const [validated, setValidated] = useState<ValidationResult[] | null>(null);
+  const [picks, setPicks] = useState<Record<string, string>>({});
   const [warnings, setWarnings] = useState<string[]>([]);
   const [runList, setRunList] = useState<RunListOutput | null>(null);
   const [pdfVerified, setPdfVerified] = useState<Set<string>>(new Set());
-  const [loading, setLoading] = useState(false);
+  const [validating, setValidating] = useState(false);
+  const [generating, setGenerating] = useState(false);
   const [error, setError] = useState("");
 
   const parsed = parseInput(input);
   const totalTubs = parsed.recipes.reduce((sum, r) => sum + r.tubs, 0);
   const selectedMachines = MACHINE_OPTIONS.filter((m) => machines[m]);
 
-  async function handleGenerate() {
+  function reset() {
+    setRunList(null);
+    setValidated(null);
+    setPicks({});
+    setWarnings([]);
+    setPdfVerified(new Set());
+    setError("");
+  }
+
+  async function handleStart() {
     if (parsed.recipes.length === 0) {
       setError("Paste at least one recipe row");
       return;
@@ -89,75 +102,147 @@ export default function GeneratePage() {
       return;
     }
 
-    setLoading(true);
-    setError("");
-    setWarnings([]);
-    setValidationResults(null);
-    setRunList(null);
+    reset();
+    setValidating(true);
 
-    // Try to validate against the uploaded PDF, but don't block on failure.
-    let validated: ValidationResult[] | null = null;
+    let results: ValidationResult[] | null = null;
+    let lookupWarning: string | null = null;
     try {
       const res = await fetch("/api/validate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ recipes: parsed.recipes }),
       });
+      const data = await res.json().catch(() => null);
       if (res.ok) {
-        const data = await res.json();
-        validated = data.results;
+        results = data.results;
       } else {
-        const data = await res.json().catch(() => null);
         const detail = data?.error || data?.details || `status ${res.status}`;
-        setWarnings([
-          `Recipe lookup unavailable (${detail}). Generating without PDF cross-check.`,
-        ]);
+        lookupWarning = `Recipe lookup unavailable (${detail}). Generating without PDF cross-check.`;
       }
     } catch (e) {
-      setWarnings([
-        `Recipe lookup failed (${e instanceof Error ? e.message : String(e)}). Generating without PDF cross-check.`,
-      ]);
+      lookupWarning = `Recipe lookup failed (${e instanceof Error ? e.message : String(e)}). Generating without PDF cross-check.`;
     }
 
-    // Build recipe payload — use matched data when we have it, stub otherwise.
+    setValidating(false);
+
+    if (lookupWarning) {
+      setWarnings([lookupWarning]);
+      await runGeneration(null, {});
+      return;
+    }
+
+    if (!results) {
+      setError("Validation returned no results");
+      return;
+    }
+
+    setValidated(results);
+
+    // Default picks: ambiguous → top suggestion if available; not_found w/ suggestions → first suggestion
+    const defaultPicks: Record<string, string> = {};
+    for (const r of results) {
+      if (r.status === "ambiguous" && r.matchedRecipe) {
+        defaultPicks[r.recipe] = r.matchedRecipe.name;
+      } else if (r.status === "not_found") {
+        defaultPicks[r.recipe] = r.suggestions?.[0] || USE_AS_TYPED;
+      }
+    }
+    setPicks(defaultPicks);
+
+    const needsReview = results.some(
+      (r) => r.status === "ambiguous" || r.status === "not_found"
+    );
+    if (!needsReview) {
+      await runGeneration(results, {});
+    }
+  }
+
+  async function runGeneration(
+    validationResults: ValidationResult[] | null,
+    pickOverrides: Record<string, string>
+  ) {
+    setGenerating(true);
+    setError("");
+
+    // Build payload using validation + picks.
     const payload = parsed.recipes.map((r) => {
-      const match = validated?.find(
-        (v) => v.recipe.toLowerCase() === r.name.toLowerCase()
+      const v = validationResults?.find(
+        (x) => x.recipe.toLowerCase() === r.name.toLowerCase()
       );
-      const recipe =
-        (match && (match.status === "matched" || match.status === "ambiguous")
-          ? match.matchedRecipe
-          : null) || stubRecipe(r.name);
-      return { name: recipe.name, tubs: r.tubs, recipe };
+
+      let recipe: Recipe;
+      if (v?.status === "matched" && v.matchedRecipe) {
+        recipe = v.matchedRecipe;
+      } else {
+        const pick = pickOverrides[r.name];
+        if (pick && pick !== USE_AS_TYPED) {
+          // Find the picked recipe in suggestions
+          const fromSuggestions =
+            v?.matchedRecipe?.name === pick ? v.matchedRecipe : null;
+          recipe = fromSuggestions || stubRecipe(pick);
+          // If we don't have full data for the pick, fetch once via /api/validate (single-name)
+          // Skip this for simplicity — we'll lazy-fetch below.
+        } else {
+          recipe = stubRecipe(r.name);
+        }
+      }
+
+      return { name: recipe.name, tubs: r.tubs, recipe, originalInput: r.name };
     });
 
-    if (validated) {
-      const verified = new Set(
-        validated
-          .filter((v) => v.status === "matched" || v.status === "ambiguous")
-          .map((v) => (v.matchedRecipe?.name || v.recipe).toLowerCase())
-      );
-      setPdfVerified(verified);
-      const notFound = validated.filter((v) => v.status === "not_found");
-      if (notFound.length > 0) {
-        setWarnings((w) => [
-          ...w,
-          `${notFound.length} recipe(s) not found in PDF: ${notFound
-            .map((v) => v.recipe)
-            .join(", ")}. Generated using just the name — base, add-ins, and allergens are unknown.`,
-        ]);
-      }
-      const ambiguous = validated.filter((v) => v.status === "ambiguous");
-      if (ambiguous.length > 0) {
-        setValidationResults(ambiguous);
+    // For picks where we only have the name (not the Recipe data), look up in cache
+    // by re-validating just those names.
+    const namesToLookup = payload
+      .filter((p) => p.recipe.base.ingredients.length === 0 && p.name !== p.originalInput)
+      .map((p) => p.name);
+
+    if (namesToLookup.length > 0) {
+      try {
+        const res = await fetch("/api/validate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            recipes: namesToLookup.map((n) => ({ name: n, tubs: 0 })),
+          }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          const lookups = data.results as ValidationResult[];
+          for (const p of payload) {
+            const found = lookups.find(
+              (l) => l.recipe.toLowerCase() === p.name.toLowerCase()
+            );
+            if (found?.matchedRecipe) {
+              p.recipe = found.matchedRecipe;
+            }
+          }
+        }
+      } catch {
+        /* fall through with stubs */
       }
     }
+
+    const verified = new Set<string>();
+    for (const p of payload) {
+      if (p.recipe.base.ingredients.length > 0) {
+        verified.add(p.recipe.name.toLowerCase());
+      }
+    }
+    setPdfVerified(verified);
 
     try {
       const res = await fetch("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ recipes: payload, machines: selectedMachines }),
+        body: JSON.stringify({
+          recipes: payload.map((p) => ({
+            name: p.name,
+            tubs: p.tubs,
+            recipe: p.recipe,
+          })),
+          machines: selectedMachines,
+        }),
       });
       const data = await res.json().catch(() => null);
       if (!res.ok) {
@@ -168,12 +253,26 @@ export default function GeneratePage() {
         return;
       }
       setRunList(data);
+      setValidated(null); // hide picker once runlist is shown
     } catch (e) {
       setError(`Network error: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
-      setLoading(false);
+      setGenerating(false);
     }
   }
+
+  async function handleConfirmPicks() {
+    if (!validated) return;
+    await runGeneration(validated, picks);
+  }
+
+  const loading = validating || generating;
+
+  const ambiguousResults = validated?.filter(
+    (r) => r.status === "ambiguous" || r.status === "not_found"
+  ) ?? [];
+  const exactMatches = validated?.filter((r) => r.status === "matched") ?? [];
+  const showPicker = validated !== null && ambiguousResults.length > 0;
 
   return (
     <div className="space-y-6">
@@ -184,7 +283,7 @@ export default function GeneratePage() {
         </span>
       </div>
 
-      {!runList && (
+      {!runList && !showPicker && (
         <div className="bg-white rounded-lg shadow p-6 space-y-4">
           <div>
             <div className="flex items-center justify-between mb-2">
@@ -236,22 +335,88 @@ export default function GeneratePage() {
 
           <div className="flex gap-3 pt-2">
             <button
-              onClick={handleGenerate}
+              onClick={handleStart}
               disabled={loading || parsed.recipes.length === 0}
               className="bg-indigo-600 text-white px-6 py-2 rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition-colors font-medium"
             >
-              {loading ? "Generating..." : "Generate Runlist"}
+              {validating
+                ? "Validating..."
+                : generating
+                ? "Generating..."
+                : "Generate Runlist"}
             </button>
           </div>
         </div>
       )}
 
-      {loading && (
+      {showPicker && !runList && (
+        <div className="bg-white rounded-lg shadow p-6 space-y-4">
+          <div>
+            <h2 className="text-lg font-semibold text-gray-900">
+              Confirm recipe matches
+            </h2>
+            <p className="text-sm text-gray-500">
+              Some names didn't exactly match the recipe PDF. Pick the right one for each so
+              your run list uses accurate base, add-in, and allergen data.
+            </p>
+          </div>
+
+          {exactMatches.length > 0 && (
+            <details className="bg-green-50 border border-green-200 rounded p-2">
+              <summary className="text-sm text-green-800 cursor-pointer font-medium">
+                ✓ {exactMatches.length} exact match{exactMatches.length === 1 ? "" : "es"}
+              </summary>
+              <ul className="mt-2 text-xs text-green-700 space-y-0.5 pl-2">
+                {exactMatches.map((m) => (
+                  <li key={m.recipe}>{m.recipe}</li>
+                ))}
+              </ul>
+            </details>
+          )}
+
+          <div className="space-y-3">
+            {ambiguousResults.map((r) => (
+              <MatchPicker
+                key={r.recipe}
+                result={r}
+                value={picks[r.recipe] || USE_AS_TYPED}
+                onChange={(v) => setPicks({ ...picks, [r.recipe]: v })}
+              />
+            ))}
+          </div>
+
+          {error && (
+            <p className="text-red-500 text-sm bg-red-50 px-3 py-2 rounded">{error}</p>
+          )}
+
+          <div className="flex gap-3 pt-2">
+            <button
+              onClick={handleConfirmPicks}
+              disabled={loading}
+              className="bg-indigo-600 text-white px-6 py-2 rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition-colors font-medium"
+            >
+              {generating ? "Generating..." : "Confirm & Generate"}
+            </button>
+            <button
+              onClick={reset}
+              className="text-gray-600 hover:text-gray-900 px-3 py-2 text-sm"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {(validating || generating) && !runList && (
         <div className="bg-white rounded-lg shadow p-8 text-center">
           <div className="animate-spin h-8 w-8 border-4 border-indigo-200 border-t-indigo-600 rounded-full mx-auto mb-4"></div>
-          <p className="text-gray-600">Optimizing production sequence...</p>
+          <p className="text-gray-600">
+            {validating ? "Looking up recipes..." : "Optimizing production sequence..."}
+          </p>
           <p className="text-sm text-gray-400 mt-1">
-            Chaining flavors, minimizing take-aparts...
+            {validating
+              ? "Matching your recipe names against the PDF."
+              : "Chaining flavors, minimizing take-aparts..."}
           </p>
         </div>
       )}
@@ -265,32 +430,87 @@ export default function GeneratePage() {
               ))}
             </div>
           )}
-          {validationResults && validationResults.length > 0 && (
-            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-sm text-yellow-800">
-              <p className="font-medium mb-1">Possible name mismatches:</p>
-              <ul className="space-y-0.5">
-                {validationResults.map((v, i) => (
-                  <li key={i}>
-                    "{v.recipe}" matched as "{v.matchedRecipe?.name}"
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
           <div className="flex justify-end print:hidden">
             <button
-              onClick={() => {
-                setRunList(null);
-                setValidationResults(null);
-                setWarnings([]);
-                setPdfVerified(new Set());
-              }}
+              onClick={reset}
               className="text-sm bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded hover:bg-indigo-100 transition-colors"
             >
               ← New Run List
             </button>
           </div>
           <RunListTable data={runList} pdfVerified={pdfVerified} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MatchPicker({
+  result,
+  value,
+  onChange,
+}: {
+  result: ValidationResult;
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  const suggestions = result.suggestions || [];
+
+  return (
+    <div className="border border-gray-200 rounded-lg p-3">
+      <div className="flex items-baseline gap-2 mb-2">
+        <span className="text-xs text-gray-400 font-medium uppercase tracking-wide">
+          You typed
+        </span>
+        <span className="font-semibold text-gray-900">{result.recipe}</span>
+        <span className="text-xs text-gray-400 ml-auto">
+          {result.tubs} tub{result.tubs === 1 ? "" : "s"}
+        </span>
+      </div>
+
+      {suggestions.length > 0 ? (
+        <div className="space-y-1">
+          <p className="text-xs text-gray-500 mb-1">Pick the correct match:</p>
+          {suggestions.map((s) => (
+            <label
+              key={s}
+              className={`flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer transition-colors ${
+                value === s
+                  ? "bg-indigo-50 border border-indigo-300"
+                  : "border border-transparent hover:bg-gray-50"
+              }`}
+            >
+              <input
+                type="radio"
+                checked={value === s}
+                onChange={() => onChange(s)}
+                className="w-4 h-4 text-indigo-600 focus:ring-indigo-500"
+              />
+              <span className="text-sm text-gray-800">{s}</span>
+            </label>
+          ))}
+          <label
+            className={`flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer transition-colors ${
+              value === USE_AS_TYPED
+                ? "bg-amber-50 border border-amber-300"
+                : "border border-transparent hover:bg-gray-50"
+            }`}
+          >
+            <input
+              type="radio"
+              checked={value === USE_AS_TYPED}
+              onChange={() => onChange(USE_AS_TYPED)}
+              className="w-4 h-4 text-amber-600 focus:ring-amber-500"
+            />
+            <span className="text-sm text-gray-600 italic">
+              Use "{result.recipe}" as-is (no PDF data)
+            </span>
+          </label>
+        </div>
+      ) : (
+        <div className="text-sm bg-amber-50 border border-amber-200 rounded p-2 text-amber-800">
+          No matches found in the PDF. The run list will use this name as-is without
+          base/add-in/allergen data.
         </div>
       )}
     </div>

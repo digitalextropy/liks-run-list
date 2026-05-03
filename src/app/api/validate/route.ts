@@ -4,8 +4,11 @@ import {
   getParsedRecipes,
   saveParsedRecipes,
 } from "@/lib/blob";
-import { parsePdfFromUrl, fuzzyMatchRecipe } from "@/lib/pdf-parser";
+import { parsePdfFromUrl, findExactMatch } from "@/lib/pdf-parser";
+import { suggestRecipeMatches } from "@/lib/claude";
 import type { ValidationResult } from "@/lib/recipe-schema";
+
+export const maxDuration = 60;
 
 export async function POST(request: Request) {
   try {
@@ -13,7 +16,6 @@ export async function POST(request: Request) {
       recipes: { name: string; tubs: number }[];
     };
 
-    // Try the cache first; fall back to parsing the PDF on demand.
     let knownRecipes = await getParsedRecipes();
     if (!knownRecipes) {
       const pdfUrl = await getRecipePdfUrl();
@@ -47,40 +49,51 @@ export async function POST(request: Request) {
       );
     }
 
+    // First pass: exact matches by name.
     const results: ValidationResult[] = [];
+    const needsAi: string[] = [];
     for (const input of recipes) {
-      const matched = fuzzyMatchRecipe(input.name, knownRecipes);
+      const matched = findExactMatch(input.name, knownRecipes);
       if (matched) {
-        if (matched.name.toLowerCase() === input.name.toLowerCase()) {
-          results.push({
-            recipe: input.name,
-            status: "matched",
-            matchedRecipe: matched,
-            tubs: input.tubs,
-          });
-        } else {
-          results.push({
-            recipe: input.name,
-            status: "ambiguous",
-            matchedRecipe: matched,
-            suggestions: [matched.name],
-            tubs: input.tubs,
-          });
-        }
+        results.push({
+          recipe: input.name,
+          status: "matched",
+          matchedRecipe: matched,
+          tubs: input.tubs,
+        });
       } else {
-        const suggestions = knownRecipes
-          .filter((r) => {
-            const words = input.name.toLowerCase().split(/\s+/);
-            return words.some((w) => r.name.toLowerCase().includes(w));
-          })
-          .slice(0, 3)
-          .map((r) => r.name);
         results.push({
           recipe: input.name,
           status: "not_found",
-          suggestions,
           tubs: input.tubs,
         });
+        needsAi.push(input.name);
+      }
+    }
+
+    // Second pass: AI suggestions for everything that didn't exactly match.
+    if (needsAi.length > 0) {
+      const knownNames = knownRecipes.map((r) => r.name);
+      let suggestions: Record<string, string[]> = {};
+      try {
+        suggestions = await suggestRecipeMatches(needsAi, knownNames);
+      } catch {
+        // AI failed — leave results as not_found with no suggestions.
+      }
+
+      for (const r of results) {
+        if (r.status !== "not_found") continue;
+        const names = suggestions[r.recipe] || [];
+        if (names.length > 0) {
+          const top = knownRecipes.find((rec) => rec.name === names[0]);
+          if (top) {
+            r.status = "ambiguous";
+            r.matchedRecipe = top;
+            r.suggestions = names.slice(0, 5);
+          } else {
+            r.suggestions = names.slice(0, 5);
+          }
+        }
       }
     }
 

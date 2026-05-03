@@ -222,27 +222,12 @@ export async function parsePdfFromUrl(url: string): Promise<Recipe[]> {
   return parsePdfBuffer(buffer);
 }
 
-export function fuzzyMatchRecipe(input: string, recipes: Recipe[]): Recipe | null {
+export function findExactMatch(input: string, recipes: Recipe[]): Recipe | null {
   const normalized = input.toLowerCase().trim();
-  const exact = recipes.find((r) => r.name.toLowerCase() === normalized);
-  if (exact) return exact;
+  return recipes.find((r) => r.name.toLowerCase() === normalized) ?? null;
+}
 
-  const partial = recipes.find((r) => r.name.toLowerCase().includes(normalized));
-  if (partial) return partial;
-
-  const reversePartial = recipes.find((r) => normalized.includes(r.name.toLowerCase()));
-  if (reversePartial) return reversePartial;
-
-  const words = normalized.split(/\s+/);
-  const scored = recipes.map((r) => {
-    const rWords = r.name.toLowerCase().split(/\s+/);
-    const matchCount = words.filter((w) =>
-      rWords.some((rw) => rw.includes(w) || w.includes(rw))
-    ).length;
-    return { recipe: r, score: matchCount / Math.max(words.length, rWords.length) };
-  });
-  scored.sort((a, b) => b.score - a.score);
-
-  if (scored[0] && scored[0].score > 0.5) return scored[0].recipe;
-  return null;
+export function findRecipeByName(name: string, recipes: Recipe[]): Recipe | null {
+  const normalized = name.toLowerCase().trim();
+  return recipes.find((r) => r.name.toLowerCase() === normalized) ?? null;
 }

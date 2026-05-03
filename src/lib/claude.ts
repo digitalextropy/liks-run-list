@@ -82,6 +82,51 @@ async function parseChunk(chunkText: string): Promise<Recipe[]> {
   return JSON.parse(jsonMatch[0]) as Recipe[];
 }
 
+export async function suggestRecipeMatches(
+  inputs: string[],
+  knownRecipeNames: string[]
+): Promise<Record<string, string[]>> {
+  if (inputs.length === 0) return {};
+
+  const response = await client.messages.create({
+    model: "claude-haiku-4-5-20251001",
+    max_tokens: 2000,
+    system: `You match user-typed ice cream flavor names to a fixed list of valid recipe names.
+
+For each user input, return up to 5 most likely matches from the valid list, ordered by likelihood (best first). Consider:
+- Spelling typos and abbreviations (e.g. "MCC" → "Mint Chocolate Chip")
+- Word order ("Choc Chip Mint" → "Mint Chocolate Chip")
+- Partial names ("Jack Daniels" → "Jack Daniels Chocolate Chip" if it exists, NOT just "Chocolate")
+- Plural/singular variations
+- Common shorthand ("Bday Cake" → "Birthday Cake")
+
+CRITICAL: Only return names from the valid list. Do NOT pick a generic match (e.g. "Chocolate") if a more specific match exists ("Jack Daniels Chocolate Chip"). If nothing reasonably matches, return [].
+
+Return a JSON object mapping each user input verbatim to an array of valid names.
+Example: { "MCC": ["Mint Chocolate Chip"], "Vanilla": ["Vanilla", "Vanilla Bean"] }
+Output ONLY the JSON object, no markdown or commentary.`,
+    messages: [
+      {
+        role: "user",
+        content: `Valid recipes (${knownRecipeNames.length}):
+${knownRecipeNames.map((n) => `- ${n}`).join("\n")}
+
+User inputs to match:
+${inputs.map((i) => `- ${i}`).join("\n")}`,
+      },
+    ],
+  });
+
+  const text = response.content[0].type === "text" ? response.content[0].text : "";
+  const jsonMatch = text.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) return {};
+  try {
+    return JSON.parse(jsonMatch[0]) as Record<string, string[]>;
+  } catch {
+    return {};
+  }
+}
+
 export async function parseRecipesWithClaude(pdfText: string): Promise<Recipe[]> {
   const chunks = chunkPdfByRecipes(pdfText);
   if (chunks.length === 0) {
