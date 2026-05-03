@@ -41,15 +41,32 @@ For base type: detect from Base Flavors section. "Plain Ice Cream Mix" → plain
 Return ONLY a valid JSON array of recipe objects. No markdown, no commentary. Output format:
 [{ "name": "...", "base": {...}, ... }, { "name": "...", ... }, ...]`;
 
-export async function parseRecipesWithClaude(pdfText: string): Promise<Recipe[]> {
+const RECIPE_BOUNDARY_MARKER = "without written permission from Liks Ice Cream.";
+const RECIPES_PER_CHUNK = 10;
+
+function chunkPdfByRecipes(pdfText: string): string[] {
+  const segments = pdfText.split(RECIPE_BOUNDARY_MARKER);
+  // Each segment past index 0 starts at a recipe name. Index 0 is preamble + first recipe.
+  const recipeBlocks = segments
+    .map((s) => s.trim())
+    .filter((s) => s.length > 100); // Drop tiny tail fragments
+
+  const chunks: string[] = [];
+  for (let i = 0; i < recipeBlocks.length; i += RECIPES_PER_CHUNK) {
+    chunks.push(recipeBlocks.slice(i, i + RECIPES_PER_CHUNK).join("\n\n--- NEXT RECIPE ---\n\n"));
+  }
+  return chunks;
+}
+
+async function parseChunk(chunkText: string): Promise<Recipe[]> {
   const response = await client.messages.create({
-    model: "claude-sonnet-4-6",
-    max_tokens: 16000,
+    model: "claude-haiku-4-5-20251001",
+    max_tokens: 8000,
     system: RECIPE_PARSE_SYSTEM_PROMPT,
     messages: [
       {
         role: "user",
-        content: `Parse every recipe from the following PDF text. Return a JSON array.\n\n--- PDF TEXT START ---\n${pdfText}\n--- PDF TEXT END ---`,
+        content: `Parse every recipe from this text chunk. Return a JSON array of recipe objects.\n\n${chunkText}`,
       },
     ],
   });
@@ -57,18 +74,18 @@ export async function parseRecipesWithClaude(pdfText: string): Promise<Recipe[]>
   const text = response.content[0].type === "text" ? response.content[0].text : "";
   const jsonMatch = text.match(/\[[\s\S]*\]/);
   if (!jsonMatch) {
-    throw new Error(
-      `Claude returned no JSON array. Raw response start: ${text.slice(0, 300)}`
-    );
+    throw new Error(`Chunk returned no JSON. Raw: ${text.slice(0, 200)}`);
   }
+  return JSON.parse(jsonMatch[0]) as Recipe[];
+}
 
-  try {
-    return JSON.parse(jsonMatch[0]) as Recipe[];
-  } catch (e) {
-    throw new Error(
-      `Claude returned invalid JSON: ${e instanceof Error ? e.message : String(e)}`
-    );
+export async function parseRecipesWithClaude(pdfText: string): Promise<Recipe[]> {
+  const chunks = chunkPdfByRecipes(pdfText);
+  if (chunks.length === 0) {
+    throw new Error("No recipe boundaries found in PDF text");
   }
+  const results = await Promise.all(chunks.map((c) => parseChunk(c)));
+  return results.flat();
 }
 
 interface RecipeRequest {
