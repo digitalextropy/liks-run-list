@@ -63,11 +63,6 @@ function detectFamily(r: RecipeRequest): FamilyKey {
   return "plain";
 }
 
-function isFamilyEligible44qt(family: FamilyKey, recipes: RecipeRequest[]): boolean {
-  if (family === "vegan" || family === "sorbet") return false;
-  return recipes.every((r) => r.recipe.eligible44qt);
-}
-
 export function assignMachines(requests: RecipeRequest[], rules: ProductionRules): AssignedRecipe[] {
   const machines = rules.machines;
   const machine44 = machines.find((m) => m.name.includes("44")) ?? machines[2];
@@ -100,19 +95,15 @@ export function assignMachines(requests: RecipeRequest[], rules: ProductionRules
   const totalTubs = requests.reduce((s, r) => s + r.tubs, 0);
   const targetPerMachine = Math.round(totalTubs / 3);
 
-  // Step 1: Assign 44 QT — eligible recipes whose tub count divides evenly.
-  // A recipe with 6 tubs on a 4-tubs/run machine would produce 8 tubs (ceil overshoot).
-  // Only assign recipes where tubs % tubs_per_run === 0 to avoid tub count mismatches.
+  // Step 1: Assign 44 QT — per-recipe eligibility check.
+  // Recipe must: (1) be eligible44qt, (2) not vegan/sorbet, (3) tubs divisible by tubs_per_run.
   const tpr44 = machine44.tubs_per_run;
   const eligible44Recipes: (RecipeRequest & { family: FamilyKey })[] = [];
-  for (const [family, recs] of familyMap.entries()) {
-    if (isFamilyEligible44qt(family, recs)) {
-      for (const r of recs) {
-        if (r.tubs % tpr44 === 0) {
-          eligible44Recipes.push(r);
-        }
-      }
-    }
+  for (const r of tagged) {
+    if (r.family === "vegan" || r.family === "sorbet") continue;
+    if (!r.recipe.eligible44qt) continue;
+    if (r.tubs % tpr44 !== 0) continue;
+    eligible44Recipes.push(r);
   }
   // Sort by tubs descending for greedy packing
   eligible44Recipes.sort((a, b) => b.tubs - a.tubs);
