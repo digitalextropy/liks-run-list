@@ -1,6 +1,9 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { ProductionRules } from "./rules-schema";
 import type { Recipe } from "./recipe-schema";
+import { assignMachines } from "./machine-assigner";
+import type { RecipeRequest } from "./machine-assigner";
+export type { RecipeRequest } from "./machine-assigner";
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -136,12 +139,6 @@ export async function parseRecipesWithClaude(pdfText: string): Promise<Recipe[]>
   return results.flat();
 }
 
-interface RecipeRequest {
-  name: string;
-  tubs: number;
-  recipe: Recipe;
-}
-
 export interface RunListOutput {
   machines: {
     name: string;
@@ -189,7 +186,11 @@ function callouts(list: { type: string; text: string }[]): string {
 }
 
 function buildSystemPrompt(rules: ProductionRules): string {
-  return `You are an expert ice cream production scheduler for Liks Ice Cream. Your job is to take a list of recipes with tub counts and produce an optimized production run list across the available machines.
+  return `You are an expert ice cream production scheduler for Liks Ice Cream.
+
+## YOUR JOB
+Machines are pre-assigned by the system. Do NOT change machine assignments.
+Your job for each machine: sequence the pre-assigned recipes optimally (minimize take-aparts, respect allergen order, ascending boldness) and determine the correct cleaning step between each consecutive run.
 
 ## MACHINES
 ${JSON.stringify(rules.machines, null, 2)}
@@ -328,44 +329,62 @@ export async function generateRunList(
 ): Promise<RunListOutput & { _retried?: boolean }> {
   const systemPrompt = buildSystemPrompt(rules);
 
-  // Tell Claude exactly how many runs each flavor needs per machine.
-  // Claude decides WHICH machine and the ORDER — we own the tub values.
-  const runSummary = recipes
-    .map((r) => {
-      const options = rules.machines.map((m) => {
-        const runs = Math.ceil(r.tubs / m.tubs_per_run);
-        return `${runs} run${runs === 1 ? "" : "s"} on ${m.name}`;
-      });
-      return `  ${r.name}: ${r.tubs} tubs → ${options.join(" OR ")}`;
-    })
-    .join("\n");
+  // Phase 1: deterministic machine assignment — keeps each flavor family on one machine.
+  const assigned = assignMachines(recipes, rules);
 
+  // Group pre-assigned recipes by machine for the prompt.
+  const byMachine = new Map<string, typeof assigned>();
+  for (const r of assigned) {
+    if (!byMachine.has(r.assignedMachine)) byMachine.set(r.assignedMachine, []);
+    byMachine.get(r.assignedMachine)!.push(r);
+  }
+
+  // Build the per-machine run requirement block for Claude.
   const machineCapacityLines = rules.machines
     .map((m) => `  - ${m.name}: ${m.tubs_per_run} tub${m.tubs_per_run === 1 ? "" : "s"} per run (fixed)`)
     .join("\n");
 
-  const userMessage = `Generate an optimized production run list for the following recipes.
+  const machineAssignmentBlock = Array.from(byMachine.entries())
+    .map(([machineName, recs]) => {
+      const machine = rules.machines.find((m) => m.name === machineName);
+      const tubsPerRun = machine?.tubs_per_run ?? 2;
+      const lines = recs.map((r) => {
+        const runsNeeded = Math.ceil(r.tubs / tubsPerRun);
+        return `    ${r.name}: ${r.tubs} tubs → ${runsNeeded} run${runsNeeded === 1 ? "" : "s"} [family: ${r.family}]`;
+      });
+      return `  ${machineName}:\n${lines.join("\n")}`;
+    })
+    .join("\n\n");
+
+  // Build the run summary for retry error messages (flat list with machine prefix)
+  const runSummary = assigned
+    .map((r) => {
+      const machine = rules.machines.find((m) => m.name === r.assignedMachine);
+      const tubsPerRun = machine?.tubs_per_run ?? 2;
+      const runsNeeded = Math.ceil(r.tubs / tubsPerRun);
+      return `  ${r.name} → ${r.assignedMachine}: ${runsNeeded} run${runsNeeded === 1 ? "" : "s"} (${r.tubs} tubs)`;
+    })
+    .join("\n");
+
+  const userMessage = `Generate an optimized production run list. Machine assignments are FIXED — do not move any recipe to a different machine.
 
 Machine capacities (fixed — do not change tub values in output):
 ${machineCapacityLines}
 
-Your job: decide (1) which machine each flavor runs on and (2) the sequence.
-The tub count per run is fixed by machine config — you do not set it.
-Schedule exactly the required number of runs per flavor:
-
-${runSummary}
+PRE-ASSIGNED RECIPES PER MACHINE (sequence and clean between runs optimally):
+${machineAssignmentBlock}
 
 Grand total: ${recipes.reduce((sum, r) => sum + r.tubs, 0)} tubs
 
-RECIPES (for sequencing/allergen/cleaning decisions):
-${recipes.map((r) => `- ${r.name}: ${r.tubs} tubs
+RECIPE DETAILS (for sequencing/allergen/cleaning decisions):
+${assigned.map((r) => `- ${r.name} [→ ${r.assignedMachine}]: ${r.tubs} tubs
   Base: ${r.recipe.base.type} (${r.recipe.base.ingredients.join(", ")})
   Add-ins: ${r.recipe.addIns.map((a) => `${a.name} [${a.taTrigger} TA]`).join(", ") || "none"}
   Fold-ins: ${r.recipe.foldIns.map((f) => f.name).join(", ") || "none"}
   Allergens: ${r.recipe.allergens.join(", ") || "none"}
   44QT eligible: ${r.recipe.eligible44qt}`).join("\n\n")}
 
-Assign to machines and sequence optimally. Return JSON only.`;
+Sequence each machine's runs optimally. Return JSON only.`;
 
   const firstResponse = await client.messages.create({
     model: "claude-sonnet-4-6",
@@ -393,11 +412,12 @@ Assign to machines and sequence optimally. Return JSON only.`;
 
 ${errors.map((e) => `- ${e}`).join("\n")}
 
-The required run counts per flavor are:
+Required run counts (machine assignments are fixed — do not move recipes):
 ${runSummary}
 
 Rules:
 - Keep all other flavors exactly as scheduled.
+- Do NOT move any recipe to a different machine.
 - Keep flavor names exactly as in the recipe list (no abbreviations).
 - Return ONLY the corrected JSON.`;
 

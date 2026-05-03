@@ -79,7 +79,7 @@ function migrate(raw: any): ProductionRules {
 
     recipe_notes: Array.isArray(raw.recipe_notes) ? raw.recipe_notes : [],
     day_structure: Array.isArray(raw.day_structure) ? raw.day_structure : [],
-    critical_rules: Array.isArray(raw.critical_rules) ? raw.critical_rules : DEFAULT_CRITICAL_RULES,
+    critical_rules: Array.isArray(raw.critical_rules) && raw.critical_rules.length > 0 ? raw.critical_rules : DEFAULT_CRITICAL_RULES,
   };
 }
 
