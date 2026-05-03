@@ -65,65 +65,54 @@ function detectFamily(r: RecipeRequest): FamilyKey {
 
 export function assignMachines(requests: RecipeRequest[], rules: ProductionRules): AssignedRecipe[] {
   const machines = rules.machines;
-  const machine44 = machines.find((m) => m.name.includes("44")) ?? machines[2];
-  const batchMachines = machines.filter((m) => m !== machine44);
-
-  if (!machine44 || batchMachines.length < 2) {
-    const tubsPerRun = machines[0]?.tubs_per_run ?? 2;
-    return requests.map((r) => ({
-      ...r,
-      assignedMachine: machines[0]?.name ?? "Batch A",
-      runsNeeded: Math.ceil(r.tubs / tubsPerRun),
-      family: detectFamily(r),
-    }));
-  }
-
-  const batchA = batchMachines[0];
-  const batchB = batchMachines[1];
 
   // Tag each recipe with its family
   const tagged = requests.map((r) => ({ ...r, family: detectFamily(r) }));
 
-  // Group by family
-  const familyMap = new Map<FamilyKey, (RecipeRequest & { family: FamilyKey })[]>();
-  for (const r of tagged) {
-    if (!familyMap.has(r.family)) familyMap.set(r.family, []);
-    familyMap.get(r.family)!.push(r);
+  // Special-case: single machine — everything goes there
+  if (machines.length <= 1) {
+    const m = machines[0];
+    return tagged.map((r) => ({
+      ...r,
+      assignedMachine: m?.name ?? "Batch A",
+      runsNeeded: Math.ceil(r.tubs / (m?.tubs_per_run ?? 2)),
+    }));
   }
 
-  // Total volume
   const totalTubs = requests.reduce((s, r) => s + r.tubs, 0);
-  const targetPerMachine = Math.round(totalTubs / 3);
 
-  // Step 1: Assign 44 QT — per-recipe eligibility check.
-  // Recipe must: (1) be eligible44qt, (2) not vegan/sorbet, (3) tubs divisible by tubs_per_run.
-  const tpr44 = machine44.tubs_per_run;
-  const eligible44Recipes: (RecipeRequest & { family: FamilyKey })[] = [];
-  for (const r of tagged) {
-    if (r.family === "vegan" || r.family === "sorbet") continue;
-    if (!r.recipe.eligible44qt) continue;
-    if (r.tubs % tpr44 !== 0) continue;
-    eligible44Recipes.push(r);
-  }
-  // Sort by tubs descending for greedy packing
-  eligible44Recipes.sort((a, b) => b.tubs - a.tubs);
+  // Identify 44 QT machine (if present among selected machines)
+  const machine44 = machines.find((m) => m.name.includes("44"));
 
+  // Step 1: If 44 QT is available, assign eligible recipes to it (target ~1/3 of volume)
   const assigned44 = new Set<RecipeRequest>();
-  let tubs44 = 0;
+  if (machine44) {
+    const tpr44 = machine44.tubs_per_run;
+    const targetPerMachine = Math.round(totalTubs / machines.length);
 
-  for (const r of eligible44Recipes) {
-    if (tubs44 + r.tubs <= targetPerMachine * 1.5 || tubs44 < targetPerMachine * 0.5) {
-      assigned44.add(r);
-      tubs44 += r.tubs;
+    const eligible44Recipes = tagged.filter((r) => {
+      if (r.family === "vegan" || r.family === "sorbet") return false;
+      if (!r.recipe.eligible44qt) return false;
+      if (r.tubs % tpr44 !== 0) return false;
+      return true;
+    });
+    eligible44Recipes.sort((a, b) => b.tubs - a.tubs);
+
+    let tubs44 = 0;
+    for (const r of eligible44Recipes) {
+      if (tubs44 + r.tubs <= targetPerMachine * 1.5 || tubs44 < targetPerMachine * 0.5) {
+        assigned44.add(r);
+        tubs44 += r.tubs;
+      }
+      if (tubs44 >= targetPerMachine) break;
     }
-    if (tubs44 >= targetPerMachine) break;
   }
 
-  // Step 2: Balance remaining recipes between Batch A and Batch B.
-  // Allergen constraints: vegan first (assign to A), nut/peanut last (assign to least-loaded).
-  // Allow splitting families across machines for balance.
+  // Step 2: Distribute remaining recipes across non-44 QT machines (or all machines if no 44 QT).
+  const batchMachines = machines.filter((m) => m !== machine44);
   const remaining = tagged.filter((r) => !assigned44.has(r));
 
+  // Separate allergen-sensitive groups for ordering
   const veganRecipes = remaining.filter((r) => r.family === "vegan");
   const nutRecipes = remaining.filter((r) => r.family === "nut");
   const peanutRecipes = remaining.filter((r) => r.family === "peanut");
@@ -131,51 +120,43 @@ export function assignMachines(requests: RecipeRequest[], rules: ProductionRules
     (r) => r.family !== "vegan" && r.family !== "nut" && r.family !== "peanut"
   );
 
-  const assignedA = new Set<RecipeRequest>();
-  const assignedB = new Set<RecipeRequest>();
-  let tubsA = 0;
-  let tubsB = 0;
+  // Track tubs per batch machine
+  const machineTubs = new Map<string, number>(batchMachines.map((m) => [m.name, 0]));
+  const machineAssignments = new Map<RecipeRequest, string>();
 
-  // Vegan goes to Batch A (runs first)
-  for (const r of veganRecipes) {
-    assignedA.add(r);
-    tubsA += r.tubs;
-  }
-
-  // Sort other recipes largest first for better greedy packing
-  otherRecipes.sort((a, b) => b.tubs - a.tubs);
-
-  // Pure greedy: assign each recipe to the least-loaded batch machine
-  for (const r of otherRecipes) {
-    if (tubsA <= tubsB) {
-      assignedA.add(r);
-      tubsA += r.tubs;
-    } else {
-      assignedB.add(r);
-      tubsB += r.tubs;
+  function assignToLeastLoaded(recipe: RecipeRequest) {
+    let minMachine = batchMachines[0].name;
+    let minTubs = machineTubs.get(minMachine) ?? 0;
+    for (const m of batchMachines) {
+      const t = machineTubs.get(m.name) ?? 0;
+      if (t < minTubs) { minTubs = t; minMachine = m.name; }
     }
+    machineAssignments.set(recipe, minMachine);
+    machineTubs.set(minMachine, (machineTubs.get(minMachine) ?? 0) + recipe.tubs);
   }
 
-  // Nuts and peanuts: assign to least-loaded (they run last regardless)
-  for (const r of nutRecipes) {
-    if (tubsA <= tubsB) { assignedA.add(r); tubsA += r.tubs; }
-    else { assignedB.add(r); tubsB += r.tubs; }
+  // Vegan goes to first batch machine (runs first of day)
+  for (const r of veganRecipes) {
+    machineAssignments.set(r, batchMachines[0].name);
+    machineTubs.set(batchMachines[0].name, (machineTubs.get(batchMachines[0].name) ?? 0) + r.tubs);
   }
-  for (const r of peanutRecipes) {
-    if (tubsA <= tubsB) { assignedA.add(r); tubsA += r.tubs; }
-    else { assignedB.add(r); tubsB += r.tubs; }
-  }
+
+  // Other recipes: largest first, greedy to least-loaded
+  otherRecipes.sort((a, b) => b.tubs - a.tubs);
+  for (const r of otherRecipes) assignToLeastLoaded(r);
+
+  // Nuts and peanuts last (still balance across machines)
+  for (const r of nutRecipes) assignToLeastLoaded(r);
+  for (const r of peanutRecipes) assignToLeastLoaded(r);
 
   // Step 3: Build result with exact run counts
   const result: AssignedRecipe[] = [];
   for (const r of tagged) {
     let machineName: string;
     if (assigned44.has(r)) {
-      machineName = machine44.name;
-    } else if (assignedA.has(r)) {
-      machineName = batchA.name;
+      machineName = machine44!.name;
     } else {
-      machineName = batchB.name;
+      machineName = machineAssignments.get(r) ?? batchMachines[0].name;
     }
     const tubsPerRun = machines.find((m) => m.name === machineName)!.tubs_per_run;
     result.push({
