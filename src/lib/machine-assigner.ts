@@ -100,11 +100,18 @@ export function assignMachines(requests: RecipeRequest[], rules: ProductionRules
   const totalTubs = requests.reduce((s, r) => s + r.tubs, 0);
   const targetPerMachine = Math.round(totalTubs / 3);
 
-  // Step 1: Assign 44 QT — eligible families only, individual recipes assigned greedily
+  // Step 1: Assign 44 QT — eligible recipes whose tub count divides evenly.
+  // A recipe with 6 tubs on a 4-tubs/run machine would produce 8 tubs (ceil overshoot).
+  // Only assign recipes where tubs % tubs_per_run === 0 to avoid tub count mismatches.
+  const tpr44 = machine44.tubs_per_run;
   const eligible44Recipes: (RecipeRequest & { family: FamilyKey })[] = [];
   for (const [family, recs] of familyMap.entries()) {
     if (isFamilyEligible44qt(family, recs)) {
-      eligible44Recipes.push(...recs);
+      for (const r of recs) {
+        if (r.tubs % tpr44 === 0) {
+          eligible44Recipes.push(r);
+        }
+      }
     }
   }
   // Sort by tubs descending for greedy packing
@@ -114,7 +121,6 @@ export function assignMachines(requests: RecipeRequest[], rules: ProductionRules
   let tubs44 = 0;
 
   for (const r of eligible44Recipes) {
-    // Only add if it doesn't overshoot target by too much
     if (tubs44 + r.tubs <= targetPerMachine * 1.5 || tubs44 < targetPerMachine * 0.5) {
       assigned44.add(r);
       tubs44 += r.tubs;
@@ -145,36 +151,17 @@ export function assignMachines(requests: RecipeRequest[], rules: ProductionRules
     tubsA += r.tubs;
   }
 
-  // Sort other recipes by family then tubs (keep same-family together when possible, but don't force it)
-  otherRecipes.sort((a, b) => {
-    if (a.family !== b.family) return a.family.localeCompare(b.family);
-    return b.tubs - a.tubs;
-  });
+  // Sort other recipes largest first for better greedy packing
+  otherRecipes.sort((a, b) => b.tubs - a.tubs);
 
-  // Greedy assignment per recipe — same family preferred on same machine but balance wins
-  const familyPreference = new Map<FamilyKey, "A" | "B">();
-
+  // Pure greedy: assign each recipe to the least-loaded batch machine
   for (const r of otherRecipes) {
-    const pref = familyPreference.get(r.family);
-    // If this family already started on a machine AND assigning there doesn't create >60% imbalance, follow preference
-    const totalBatch = tubsA + tubsB + r.tubs;
-    if (pref === "A" && (tubsA + r.tubs) / totalBatch <= 0.6) {
+    if (tubsA <= tubsB) {
       assignedA.add(r);
       tubsA += r.tubs;
-    } else if (pref === "B" && (tubsB + r.tubs) / totalBatch <= 0.6) {
+    } else {
       assignedB.add(r);
       tubsB += r.tubs;
-    } else {
-      // Assign to least-loaded
-      if (tubsA <= tubsB) {
-        assignedA.add(r);
-        tubsA += r.tubs;
-        if (!pref) familyPreference.set(r.family, "A");
-      } else {
-        assignedB.add(r);
-        tubsB += r.tubs;
-        if (!pref) familyPreference.set(r.family, "B");
-      }
     }
   }
 
