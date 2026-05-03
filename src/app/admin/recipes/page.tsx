@@ -18,6 +18,7 @@ export default function AdminRecipesPage() {
   const [recipeCount, setRecipeCount] = useState<number | null>(null);
   const [recipes, setRecipes] = useState<{ name: string }[] | null>(null);
   const [dragActive, setDragActive] = useState(false);
+  const [reparsing, setReparsing] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -116,6 +117,29 @@ export default function AdminRecipesPage() {
     setDragActive(false);
   }
 
+  async function handleReparse() {
+    setReparsing(true);
+    setError("");
+    setMessage("Re-parsing PDF with Claude... this can take ~30 seconds.");
+    try {
+      const res = await fetch("/api/recipes/reparse", { method: "POST" });
+      const data = await res.json();
+      if (res.ok) {
+        setMessage(`Parsed ${data.recipeCount} recipes.`);
+        setRecipeCount(data.recipeCount);
+        await fetchRecipes();
+      } else {
+        setError(`Re-parse failed: ${data.error || ""} ${data.details || ""}`);
+        setMessage("");
+      }
+    } catch (e) {
+      setError(`Re-parse failed: ${e instanceof Error ? e.message : String(e)}`);
+      setMessage("");
+    } finally {
+      setReparsing(false);
+    }
+  }
+
   return (
     <div className="space-y-6 max-w-2xl">
       <h1 className="text-2xl font-bold text-gray-900">Recipe PDF Management</h1>
@@ -139,17 +163,26 @@ export default function AdminRecipesPage() {
                   </p>
                 )}
               </div>
-              <a
-                href={pdfInfo.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="bg-indigo-600 text-white text-xs font-medium px-3 py-1.5 rounded hover:bg-indigo-700 transition-colors shrink-0 inline-flex items-center gap-1"
-              >
-                View PDF
-                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                </svg>
-              </a>
+              <div className="flex flex-col gap-1.5 shrink-0">
+                <a
+                  href={pdfInfo.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="bg-indigo-600 text-white text-xs font-medium px-3 py-1.5 rounded hover:bg-indigo-700 transition-colors inline-flex items-center justify-center gap-1"
+                >
+                  View PDF
+                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                  </svg>
+                </a>
+                <button
+                  onClick={handleReparse}
+                  disabled={reparsing}
+                  className="bg-white border border-indigo-300 text-indigo-700 text-xs font-medium px-3 py-1.5 rounded hover:bg-indigo-50 transition-colors inline-flex items-center justify-center disabled:opacity-50"
+                >
+                  {reparsing ? "Parsing…" : "Re-parse"}
+                </button>
+              </div>
             </div>
           </div>
         ) : (

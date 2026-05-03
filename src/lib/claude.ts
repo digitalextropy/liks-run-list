@@ -4,6 +4,73 @@ import type { Recipe } from "./recipe-schema";
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
+const RECIPE_PARSE_SYSTEM_PROMPT = `You parse Liks Ice Cream recipe PDFs into structured JSON.
+
+The PDF contains many recipes concatenated together as one text blob. Each recipe follows this pattern:
+- Recipe name and short tagline (e.g., "Almond Roca Almond Ice Cream with a swirl of Chocolate Fudge Marble...")
+- "Base Flavors:" section listing base mix and ingredients
+- "Add Ins:" section listing things mixed in during freezing
+- "Fold Ins:" section (optional) listing things folded in by hand after freezing
+- "Notes:" section with prep details
+- "Ingredients:" detailed allergen list
+- "Allergens:" line listing allergens
+- A standard legal/copyright footer ("Liks meets the requirements... Copyright :...")
+- Then the next recipe's name immediately after.
+
+Extract every recipe in the document. For each one return:
+{
+  "name": string (just the recipe name, no tagline),
+  "base": {
+    "type": "plain" | "chocolate" | "sorbet" | "sherbet" | "vegan" | "graham" | "cheesecake",
+    "ingredients": string[] (the base mix ingredients with quantities)
+  },
+  "addIns": [{ "name": string, "quantity": string, "taTrigger": "always" | "conditional" | "none" }],
+  "foldIns": [{ "name": string, "quantity": string }],
+  "allergens": string[] (e.g. ["Tree Nuts", "Milk", "Soy"]),
+  "eligible44qt": boolean (false if has fold-ins OR is sorbet/sherbet, true otherwise),
+  "notes": string | null (prep notes, abbreviated)
+}
+
+For taTrigger:
+- "always" for sticky/chunky pieces (cookies, dough, brownie, graham, candy bars, marshmallow, M&Ms, Oreo, Heath, Toffee, Reese's, peanut butter cups, cotton candy)
+- "conditional" for choco flakes, chocolate chips, fudge, caramel, cocoa
+- "none" for sprinkles, fresh fruit, extracts, food coloring, dissolved coffee, etc.
+
+For base type: detect from Base Flavors section. "Plain Ice Cream Mix" → plain. "Chocolate Mix" → chocolate. Sorbet/Sherbet/Vegan/Graham/Cheesecake mixes → matching type.
+
+Return ONLY a valid JSON array of recipe objects. No markdown, no commentary. Output format:
+[{ "name": "...", "base": {...}, ... }, { "name": "...", ... }, ...]`;
+
+export async function parseRecipesWithClaude(pdfText: string): Promise<Recipe[]> {
+  const response = await client.messages.create({
+    model: "claude-sonnet-4-6",
+    max_tokens: 16000,
+    system: RECIPE_PARSE_SYSTEM_PROMPT,
+    messages: [
+      {
+        role: "user",
+        content: `Parse every recipe from the following PDF text. Return a JSON array.\n\n--- PDF TEXT START ---\n${pdfText}\n--- PDF TEXT END ---`,
+      },
+    ],
+  });
+
+  const text = response.content[0].type === "text" ? response.content[0].text : "";
+  const jsonMatch = text.match(/\[[\s\S]*\]/);
+  if (!jsonMatch) {
+    throw new Error(
+      `Claude returned no JSON array. Raw response start: ${text.slice(0, 300)}`
+    );
+  }
+
+  try {
+    return JSON.parse(jsonMatch[0]) as Recipe[];
+  } catch (e) {
+    throw new Error(
+      `Claude returned invalid JSON: ${e instanceof Error ? e.message : String(e)}`
+    );
+  }
+}
+
 interface RecipeRequest {
   name: string;
   tubs: number;

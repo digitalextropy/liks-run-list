@@ -1,10 +1,21 @@
 import { extractText as unpdfExtractText, getDocumentProxy } from "unpdf";
 import type { Recipe } from "./recipe-schema";
 
-async function extractText(buffer: Buffer): Promise<string> {
+export async function extractPdfText(buffer: Buffer): Promise<string> {
   const pdf = await getDocumentProxy(new Uint8Array(buffer));
   const { text } = await unpdfExtractText(pdf, { mergePages: true });
   return Array.isArray(text) ? text.join("\n") : text;
+}
+
+export async function extractPdfTextFromUrl(url: string): Promise<string> {
+  const response = await fetch(`${url}?t=${Date.now()}`, { cache: "no-store" });
+  if (!response.ok) throw new Error(`Failed to fetch PDF (${response.status})`);
+  const buffer = Buffer.from(await response.arrayBuffer());
+  return extractPdfText(buffer);
+}
+
+async function extractText(buffer: Buffer): Promise<string> {
+  return extractPdfText(buffer);
 }
 
 const ALWAYS_TA_INGREDIENTS = [
