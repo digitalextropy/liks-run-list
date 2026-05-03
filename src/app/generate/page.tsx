@@ -1,9 +1,50 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import RunListTable from "@/components/RunListTable";
 import type { Recipe, ValidationResult } from "@/lib/recipe-schema";
 import type { RunListOutput } from "@/lib/claude";
+
+const STORAGE_KEY = "liks-generate-state-v1";
+
+interface PersistedState {
+  input: string;
+  machines: Record<string, boolean>;
+  validated: ValidationResult[] | null;
+  picks: Record<string, string>;
+  runList: RunListOutput | null;
+  pdfVerified: string[];
+  warnings: string[];
+}
+
+function loadPersisted(): Partial<PersistedState> {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = sessionStorage.getItem(STORAGE_KEY);
+    if (!raw) return {};
+    return JSON.parse(raw) as Partial<PersistedState>;
+  } catch {
+    return {};
+  }
+}
+
+function savePersisted(state: PersistedState) {
+  if (typeof window === "undefined") return;
+  try {
+    sessionStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  } catch {
+    /* quota or serialization error — ignore */
+  }
+}
+
+function clearPersisted() {
+  if (typeof window === "undefined") return;
+  try {
+    sessionStorage.removeItem(STORAGE_KEY);
+  } catch {
+    /* ignore */
+  }
+}
 
 interface ParsedRecipe {
   name: string;
@@ -78,6 +119,40 @@ export default function GeneratePage() {
   const [validating, setValidating] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState("");
+  const hydrated = useRef(false);
+
+  // Restore from sessionStorage on first mount.
+  useEffect(() => {
+    const persisted = loadPersisted();
+    if (persisted.input !== undefined) setInput(persisted.input);
+    if (persisted.machines) {
+      setMachines({
+        "Batch A": persisted.machines["Batch A"] ?? true,
+        "Batch B": persisted.machines["Batch B"] ?? true,
+        "44 QT": persisted.machines["44 QT"] ?? true,
+      });
+    }
+    if (persisted.validated) setValidated(persisted.validated);
+    if (persisted.picks) setPicks(persisted.picks);
+    if (persisted.runList) setRunList(persisted.runList);
+    if (persisted.pdfVerified) setPdfVerified(new Set(persisted.pdfVerified));
+    if (persisted.warnings) setWarnings(persisted.warnings);
+    hydrated.current = true;
+  }, []);
+
+  // Persist on any meaningful state change.
+  useEffect(() => {
+    if (!hydrated.current) return;
+    savePersisted({
+      input,
+      machines,
+      validated,
+      picks,
+      runList,
+      pdfVerified: Array.from(pdfVerified),
+      warnings,
+    });
+  }, [input, machines, validated, picks, runList, pdfVerified, warnings]);
 
   const parsed = parseInput(input);
   const totalTubs = parsed.recipes.reduce((sum, r) => sum + r.tubs, 0);
@@ -90,6 +165,7 @@ export default function GeneratePage() {
     setWarnings([]);
     setPdfVerified(new Set());
     setError("");
+    clearPersisted();
   }
 
   async function handleStart() {
