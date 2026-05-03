@@ -273,43 +273,68 @@ You MUST respond with ONLY valid JSON matching this exact schema (no markdown, n
 Optimize for fewest total take-aparts while respecting all safety and allergen rules.`;
 }
 
-function checkTubCounts(
-  result: RunListOutput,
-  recipes: RecipeRequest[]
-): { errors: string[]; scheduledByFlavor: Record<string, number> } {
-  const scheduledByFlavor: Record<string, number> = {};
+function parseRunListJson(text: string): RunListOutput {
+  const jsonMatch = text.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) throw new Error(`No JSON found. Raw: ${text.slice(0, 300)}`);
+  return JSON.parse(jsonMatch[0]) as RunListOutput;
+}
+
+// After Claude returns, inject correct tub values from machine config.
+// Claude decides sequencing and machine assignment — we own the tub counts.
+function injectTubCounts(result: RunListOutput, rules: ProductionRules): RunListOutput {
+  const tubsPerRun = new Map(rules.machines.map((m) => [m.name, m.tubs_per_run]));
   for (const machine of result.machines) {
+    const perRun = tubsPerRun.get(machine.name) ?? machine.tubs_per_run;
+    machine.tubs_per_run = perRun;
+    for (const run of machine.runs) {
+      run.tubs = perRun;
+    }
+    machine.summary.total_tubs = machine.runs.length * perRun;
+    machine.summary.total_runs = machine.runs.length;
+  }
+  result.totals.tubs = result.machines.reduce((s, m) => s + m.summary.total_tubs, 0);
+  result.totals.runs = result.machines.reduce((s, m) => s + m.summary.total_runs, 0);
+  return result;
+}
+
+// Check whether Claude scheduled the right number of RUNS per flavor.
+// (Tub values are now deterministic, but run counts still come from Claude.)
+function checkRunCounts(
+  result: RunListOutput,
+  recipes: RecipeRequest[],
+  rules: ProductionRules
+): { errors: string[]; runsByFlavor: Record<string, { machine: string; runs: number }[]> } {
+  const tubsPerRun = new Map(rules.machines.map((m) => [m.name, m.tubs_per_run]));
+
+  // Build: flavorKey -> list of { machine, runs }
+  const runsByFlavor: Record<string, { machine: string; runs: number }[]> = {};
+  for (const machine of result.machines) {
+    const flavorCounts: Record<string, number> = {};
     for (const run of machine.runs) {
       const key = run.flavor.toLowerCase().trim();
-      scheduledByFlavor[key] = (scheduledByFlavor[key] || 0) + run.tubs;
+      flavorCounts[key] = (flavorCounts[key] || 0) + 1;
+    }
+    for (const [key, count] of Object.entries(flavorCounts)) {
+      runsByFlavor[key] = runsByFlavor[key] || [];
+      runsByFlavor[key].push({ machine: machine.name, runs: count });
     }
   }
 
   const errors: string[] = [];
   for (const r of recipes) {
-    // Try exact match, then normalized (spaces stripped)
-    const exact = scheduledByFlavor[r.name.toLowerCase().trim()];
-    let scheduled = exact;
-    if (scheduled === undefined) {
-      const norm = r.name.toLowerCase().replace(/\s+/g, "");
-      for (const [k, v] of Object.entries(scheduledByFlavor)) {
-        if (k.replace(/\s+/g, "") === norm) { scheduled = v; break; }
-      }
-    }
-    scheduled = scheduled ?? 0;
-    if (scheduled !== r.tubs) {
-      errors.push(
-        `"${r.name}": requested ${r.tubs} tubs but scheduled ${scheduled} (${scheduled > r.tubs ? "over by" : "under by"} ${Math.abs(r.tubs - scheduled)})`
-      );
+    const key = r.name.toLowerCase().trim();
+    const entries = runsByFlavor[key] || [];
+    const scheduledTubs = entries.reduce((s, e) => {
+      return s + e.runs * (tubsPerRun.get(e.machine) ?? 0);
+    }, 0);
+    if (scheduledTubs !== r.tubs) {
+      const detail = entries.length
+        ? entries.map((e) => `${e.runs} run(s) on ${e.machine}`).join(", ")
+        : "not scheduled";
+      errors.push(`"${r.name}": need ${r.tubs} tubs but got ${scheduledTubs} (${detail})`);
     }
   }
-  return { errors, scheduledByFlavor };
-}
-
-function parseRunListJson(text: string): RunListOutput {
-  const jsonMatch = text.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) throw new Error(`No JSON found. Raw: ${text.slice(0, 300)}`);
-  return JSON.parse(jsonMatch[0]) as RunListOutput;
+  return { errors, runsByFlavor };
 }
 
 export async function generateRunList(
@@ -318,39 +343,36 @@ export async function generateRunList(
 ): Promise<RunListOutput & { _retried?: boolean }> {
   const systemPrompt = buildSystemPrompt(rules);
 
-  const tubSummary = recipes
+  // Tell Claude exactly how many runs each flavor needs per machine.
+  // Claude decides WHICH machine and the ORDER — we own the tub values.
+  const runSummary = recipes
     .map((r) => {
-      const runsNeeded: Record<string, number> = {};
-      for (const m of rules.machines) {
-        runsNeeded[m.name] = Math.ceil(r.tubs / m.tubs_per_run);
-      }
-      return `  ${r.name}: ${r.tubs} tubs (${rules.machines.map((m) => `${runsNeeded[m.name]} run${runsNeeded[m.name] === 1 ? "" : "s"} on ${m.name}`).join(" OR ")})`;
+      const options = rules.machines.map((m) => {
+        const runs = Math.ceil(r.tubs / m.tubs_per_run);
+        return `${runs} run${runs === 1 ? "" : "s"} on ${m.name}`;
+      });
+      return `  ${r.name}: ${r.tubs} tubs → ${options.join(" OR ")}`;
     })
     .join("\n");
 
   const machineCapacityLines = rules.machines
-    .map((m) => `  - ${m.name}: exactly ${m.tubs_per_run} tub${m.tubs_per_run === 1 ? "" : "s"} per run`)
+    .map((m) => `  - ${m.name}: ${m.tubs_per_run} tub${m.tubs_per_run === 1 ? "" : "s"} per run (fixed)`)
     .join("\n");
 
   const userMessage = `Generate an optimized production run list for the following recipes.
 
-CRITICAL: The tub counts below are non-negotiable. Every single tub must appear in the output.
-
-Machine capacities (tubs per run — from configuration):
+Machine capacities (fixed — do not change tub values in output):
 ${machineCapacityLines}
 
-Rules for tub counting:
-- Each run produces EXACTLY the machine's tubs_per_run — no partial runs, no rounding.
-- If a flavor needs more tubs than one run holds, schedule multiple consecutive runs on the same machine.
-- DO NOT schedule the same flavor on multiple different machines unless you intentionally split tubs, and that split must sum to exactly the requested count.
-- After building the schedule, verify each flavor: sum of tubs across all runs on all machines = requested amount.
+Your job: decide (1) which machine each flavor runs on and (2) the sequence.
+The tub count per run is fixed by machine config — you do not set it.
+Schedule exactly the required number of runs per flavor:
 
-REQUIRED TUB COUNTS (non-negotiable — total across all machines):
-${tubSummary}
+${runSummary}
 
 Grand total: ${recipes.reduce((sum, r) => sum + r.tubs, 0)} tubs
 
-RECIPES:
+RECIPES (for sequencing/allergen/cleaning decisions):
 ${recipes.map((r) => `- ${r.name}: ${r.tubs} tubs
   Base: ${r.recipe.base.type} (${r.recipe.base.ingredients.join(", ")})
   Add-ins: ${r.recipe.addIns.map((a) => `${a.name} [${a.taTrigger} TA]`).join(", ") || "none"}
@@ -360,7 +382,6 @@ ${recipes.map((r) => `- ${r.name}: ${r.tubs} tubs
 
 Assign to machines and sequence optimally. Return JSON only.`;
 
-  // First attempt
   const firstResponse = await client.messages.create({
     model: "claude-sonnet-4-6",
     max_tokens: 8000,
@@ -376,20 +397,24 @@ Assign to machines and sequence optimally. Return JSON only.`;
     throw new Error(`Claude returned invalid JSON: ${e instanceof Error ? e.message : String(e)}`);
   }
 
-  // Check tub counts — retry once if wrong
-  const { errors } = checkTubCounts(result, recipes);
+  // Inject correct tub counts — Claude's tub values are discarded.
+  injectTubCounts(result, rules);
+
+  // Verify run counts produce correct totals. Retry once if wrong.
+  const { errors } = checkRunCounts(result, recipes, rules);
   if (errors.length === 0) return result;
 
-  const correctionMessage = `Your run list has tub count errors. Fix ONLY these issues and return the corrected complete JSON:
+  const correctionMessage = `The run COUNTS are wrong for some flavors. Fix only these and return the corrected JSON:
 
 ${errors.map((e) => `- ${e}`).join("\n")}
 
-Rules for fixing:
-- If a flavor is over-scheduled (appears on multiple machines when it shouldn't): remove it from the machine where it doesn't belong.
-- If a flavor is under-scheduled: add the missing runs in the correct position (respecting sequencing and allergen rules).
-- Do NOT change any correctly scheduled flavors.
-- Keep all flavor names EXACTLY as given in the original recipe list (do not abbreviate).
-- Return ONLY the corrected JSON, no explanation.`;
+The required run counts per flavor are:
+${runSummary}
+
+Rules:
+- Keep all other flavors exactly as scheduled.
+- Keep flavor names exactly as in the recipe list (no abbreviations).
+- Return ONLY the corrected JSON.`;
 
   const retryResponse = await client.messages.create({
     model: "claude-sonnet-4-6",
@@ -404,9 +429,10 @@ Rules for fixing:
 
   const retryText = retryResponse.content[0].type === "text" ? retryResponse.content[0].text : "";
   try {
-    return { ...parseRunListJson(retryText), _retried: true };
-  } catch (e) {
-    // Retry also failed to parse — return original with errors visible to caller
+    const retried = parseRunListJson(retryText);
+    injectTubCounts(retried, rules);
+    return { ...retried, _retried: true };
+  } catch {
     return result;
   }
 }
