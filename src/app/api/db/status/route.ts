@@ -1,12 +1,12 @@
-import { sql } from "@vercel/postgres";
+import { query } from "@/lib/db/pool";
 import { NextResponse } from "next/server";
 
 export async function GET() {
   try {
-    const products = await sql`SELECT COUNT(*) as count FROM products`;
-    const ingredients = await sql`SELECT COUNT(*) as count FROM ingredients`;
-    const pi = await sql`SELECT COUNT(*) as count FROM product_ingredients`;
-    const activeProducts = await sql`SELECT COUNT(*) as count FROM products WHERE active = true`;
+    const products = await query("SELECT COUNT(*) as count FROM products");
+    const ingredients = await query("SELECT COUNT(*) as count FROM ingredients");
+    const pi = await query("SELECT COUNT(*) as count FROM product_ingredients");
+    const activeProducts = await query("SELECT COUNT(*) as count FROM products WHERE active = true");
 
     return NextResponse.json({
       products: Number(products.rows[0].count),

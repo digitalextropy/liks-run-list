@@ -1,4 +1,4 @@
-import { sql } from "@vercel/postgres";
+import { query } from "@/lib/db/pool";
 
 interface IngredientRow {
   pi_id: number;
@@ -49,11 +49,9 @@ function deriveIngredientText(ingredients: IngredientRow[]): string {
 
 export async function GET() {
   try {
-    const productsResult = await sql`
-      SELECT * FROM products ORDER BY name ASC
-    `;
+    const productsResult = await query("SELECT * FROM products ORDER BY name ASC");
 
-    const piResult = await sql`
+    const piResult = await query(`
       SELECT
         pi.id AS pi_id,
         pi.product_id,
@@ -75,7 +73,7 @@ export async function GET() {
       FROM product_ingredients pi
       JOIN ingredients i ON i.id = pi.ingredient_id
       ORDER BY pi.role, pi.position
-    `;
+    `);
 
     const recipes = productsResult.rows.map((product) => {
       const productIngredients = piResult.rows.filter(
@@ -137,38 +135,32 @@ export async function POST(request: Request) {
       return Response.json({ error: "name is required" }, { status: 400 });
     }
 
-    // Insert product
-    const productResult = await sql`
-      INSERT INTO products (name, sold_id, tagline, notes, label_text, label_type, active)
-      VALUES (${name}, ${sold_id || null}, ${tagline || null}, ${notes || null}, ${label_text || null}, ${label_type || null}, ${active ?? true})
-      RETURNING *
-    `;
+    const productResult = await query(
+      `INSERT INTO products (name, sold_id, tagline, notes, label_text, label_type, active)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING *`,
+      [name, sold_id || null, tagline || null, notes || null, label_text || null, label_type || null, active ?? true]
+    );
     const product = productResult.rows[0];
 
-    // Insert ingredient links
     const ingredientRows = [
       ...(bases || []).map((b: { ingredient_id: number; volume?: string }, i: number) => ({
-        ...b,
-        role: "base",
-        position: i + 1,
+        ...b, role: "base", position: i + 1,
       })),
       ...(addins || []).map((a: { ingredient_id: number; volume?: string }, i: number) => ({
-        ...a,
-        role: "addin",
-        position: i + 1,
+        ...a, role: "addin", position: i + 1,
       })),
       ...(foldins || []).map((f: { ingredient_id: number; volume?: string }, i: number) => ({
-        ...f,
-        role: "foldin",
-        position: i + 1,
+        ...f, role: "foldin", position: i + 1,
       })),
     ];
 
     for (const row of ingredientRows) {
-      await sql`
-        INSERT INTO product_ingredients (product_id, ingredient_id, role, position, volume)
-        VALUES (${product.id}, ${row.ingredient_id}, ${row.role}, ${row.position}, ${row.volume || null})
-      `;
+      await query(
+        `INSERT INTO product_ingredients (product_id, ingredient_id, role, position, volume)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [product.id, row.ingredient_id, row.role, row.position, row.volume || null]
+      );
     }
 
     return Response.json({ recipe: product }, { status: 201 });

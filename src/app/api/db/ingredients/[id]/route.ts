@@ -1,4 +1,4 @@
-import { sql } from "@vercel/postgres";
+import { query } from "@/lib/db/pool";
 
 export async function GET(
   _request: Request,
@@ -6,7 +6,7 @@ export async function GET(
 ) {
   const { id } = await params;
   try {
-    const result = await sql`SELECT * FROM ingredients WHERE id = ${id}`;
+    const result = await query("SELECT * FROM ingredients WHERE id = $1", [id]);
     if (result.rows.length === 0) {
       return Response.json({ error: "Ingredient not found" }, { status: 404 });
     }
@@ -53,28 +53,29 @@ export async function PUT(
       );
     }
 
-    const result = await sql`
-      UPDATE ingredients SET
-        item_name = ${item_name},
-        generic_name = ${generic_name || null},
-        item_cost = ${item_cost || null},
-        item_measurement = ${item_measurement || null},
-        item_unit = ${item_unit || null},
-        item_unit_qty = ${item_unit_qty || null},
-        active = ${active ?? true},
-        ingredient_text = ${ingredient_text || null},
-        allergen_alcohol = ${allergen_alcohol ?? false},
-        allergen_corn_syrup = ${allergen_corn_syrup ?? false},
-        allergen_egg = ${allergen_egg ?? false},
-        allergen_milk = ${allergen_milk ?? false},
-        allergen_peanuts = ${allergen_peanuts ?? false},
-        allergen_soy = ${allergen_soy ?? false},
-        allergen_sulfites = ${allergen_sulfites ?? false},
-        allergen_tree_nuts = ${allergen_tree_nuts ?? false},
-        allergen_wheat = ${allergen_wheat ?? false}
-      WHERE id = ${id}
-      RETURNING *
-    `;
+    const result = await query(
+      `UPDATE ingredients SET
+        item_name = $1, generic_name = $2, item_cost = $3,
+        item_measurement = $4, item_unit = $5, item_unit_qty = $6,
+        active = $7, ingredient_text = $8,
+        allergen_alcohol = $9, allergen_corn_syrup = $10,
+        allergen_egg = $11, allergen_milk = $12,
+        allergen_peanuts = $13, allergen_soy = $14,
+        allergen_sulfites = $15, allergen_tree_nuts = $16,
+        allergen_wheat = $17
+      WHERE id = $18
+      RETURNING *`,
+      [
+        item_name, generic_name || null, item_cost || null,
+        item_measurement || null, item_unit || null, item_unit_qty || null,
+        active ?? true, ingredient_text || null,
+        allergen_alcohol ?? false, allergen_corn_syrup ?? false,
+        allergen_egg ?? false, allergen_milk ?? false,
+        allergen_peanuts ?? false, allergen_soy ?? false,
+        allergen_sulfites ?? false, allergen_tree_nuts ?? false,
+        allergen_wheat ?? false, id,
+      ]
+    );
 
     if (result.rows.length === 0) {
       return Response.json({ error: "Ingredient not found" }, { status: 404 });
@@ -95,10 +96,10 @@ export async function DELETE(
 ) {
   const { id } = await params;
   try {
-    // Check if ingredient is used in any product_ingredients
-    const usageCheck = await sql`
-      SELECT COUNT(*)::int AS count FROM product_ingredients WHERE ingredient_id = ${id}
-    `;
+    const usageCheck = await query(
+      "SELECT COUNT(*)::int AS count FROM product_ingredients WHERE ingredient_id = $1",
+      [id]
+    );
     if (usageCheck.rows[0].count > 0) {
       return Response.json(
         {
@@ -108,10 +109,10 @@ export async function DELETE(
       );
     }
 
-    // Soft-delete: set active = false
-    const result = await sql`
-      UPDATE ingredients SET active = false WHERE id = ${id} RETURNING *
-    `;
+    const result = await query(
+      "UPDATE ingredients SET active = false WHERE id = $1 RETURNING *",
+      [id]
+    );
 
     if (result.rows.length === 0) {
       return Response.json({ error: "Ingredient not found" }, { status: 404 });
