@@ -1,10 +1,7 @@
 import { NextResponse } from "next/server";
 import { list, del } from "@vercel/blob";
 import { saveParsedRecipes, deleteParsedRecipes } from "@/lib/blob";
-import { extractPdfTextFromUrl } from "@/lib/pdf-parser";
-import { parseRecipesWithClaude } from "@/lib/claude";
-
-export const maxDuration = 120;
+import { parsePdfFromUrl } from "@/lib/pdf-parser";
 
 export async function POST(request: Request) {
   try {
@@ -20,8 +17,7 @@ export async function POST(request: Request) {
     let recipeCount = 0;
     let parseError: string | undefined;
     try {
-      const pdfText = await extractPdfTextFromUrl(keepUrl);
-      const recipes = await parseRecipesWithClaude(pdfText);
+      const recipes = await parsePdfFromUrl(keepUrl);
       await saveParsedRecipes(recipes);
       recipeCount = recipes.length;
     } catch (e) {

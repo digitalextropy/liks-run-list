@@ -4,6 +4,9 @@ import type { Recipe } from "./recipe-schema";
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
+// Kept for potential future use if a PDF format ever requires AI parsing.
+// Currently the deterministic per-page parser in pdf-parser.ts handles
+// the production format reliably without any AI call.
 const RECIPE_PARSE_SYSTEM_PROMPT = `You parse Liks Ice Cream recipe PDFs into structured JSON.
 
 The PDF contains many recipes concatenated together as one text blob. Each recipe follows this pattern:

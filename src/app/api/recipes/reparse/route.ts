@@ -4,10 +4,7 @@ import {
   saveParsedRecipes,
   deleteParsedRecipes,
 } from "@/lib/blob";
-import { extractPdfTextFromUrl } from "@/lib/pdf-parser";
-import { parseRecipesWithClaude } from "@/lib/claude";
-
-export const maxDuration = 120;
+import { parsePdfFromUrl } from "@/lib/pdf-parser";
 
 export async function POST() {
   const pdfUrl = await getRecipePdfUrl();
@@ -19,8 +16,7 @@ export async function POST() {
   }
 
   try {
-    const pdfText = await extractPdfTextFromUrl(pdfUrl);
-    const recipes = await parseRecipesWithClaude(pdfText);
+    const recipes = await parsePdfFromUrl(pdfUrl);
     await deleteParsedRecipes();
     await saveParsedRecipes(recipes);
     return NextResponse.json({ recipeCount: recipes.length });

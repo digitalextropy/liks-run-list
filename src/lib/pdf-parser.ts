@@ -14,194 +14,212 @@ export async function extractPdfTextFromUrl(url: string): Promise<string> {
   return extractPdfText(buffer);
 }
 
-async function extractText(buffer: Buffer): Promise<string> {
-  return extractPdfText(buffer);
+async function extractPagesFromBuffer(buffer: Buffer): Promise<string[]> {
+  const pdf = await getDocumentProxy(new Uint8Array(buffer));
+  const { text } = await unpdfExtractText(pdf, { mergePages: false });
+  return Array.isArray(text) ? text : [text];
 }
 
-const ALWAYS_TA_INGREDIENTS = [
-  "cotton candy",
-  "oreo",
-  "cookie dough",
-  "brownie",
-  "graham cracker",
-  "cheesecake",
-  "candy bar",
-  "snickers",
-  "butterfinger",
-  "reese",
-  "peanut butter cup",
-  "m&m",
-  "heath",
-  "toffee",
-  "marshmallow",
+const ALWAYS_TA_PATTERNS = [
+  /cotton candy/i,
+  /oreo/i,
+  /cookie dough/i,
+  /brownie/i,
+  /graham/i,
+  /cheesecake/i,
+  /candy bar/i,
+  /snickers/i,
+  /butterfinger/i,
+  /reese/i,
+  /peanut butter cup/i,
+  /m&m/i,
+  /m and m/i,
+  /heath/i,
+  /toffee/i,
+  /marshmallow/i,
+  /toll house/i,
+  /chunk/i,
+  /piece/i,
+  /nerds/i,
 ];
 
-const CONDITIONAL_TA_INGREDIENTS = [
-  "choco flakes",
-  "chocolate flakes",
-  "chocolate chips",
-  "cocoa",
-  "fudge",
-  "caramel",
+const CONDITIONAL_TA_PATTERNS = [
+  /choco flakes/i,
+  /chocolate flake/i,
+  /chocolate chip/i,
+  /choc chip/i,
+  /fudge/i,
+  /caramel/i,
+  /cocoa/i,
 ];
 
-export async function parsePdfBuffer(buffer: Buffer): Promise<Recipe[]> {
-  const text = await extractText(buffer);
-  return parseRecipeText(text);
+const SECTION_HEADERS = [
+  "Base Flavors:",
+  "Add Ins:",
+  "Fold Ins:",
+  "Notes:",
+  "Ingredients:",
+  "Allergens:",
+] as const;
+
+function getTaTrigger(name: string): "always" | "conditional" | "none" {
+  if (ALWAYS_TA_PATTERNS.some((re) => re.test(name))) return "always";
+  if (CONDITIONAL_TA_PATTERNS.some((re) => re.test(name))) return "conditional";
+  return "none";
 }
 
-export async function parsePdfFromUrl(url: string): Promise<Recipe[]> {
-  const response = await fetch(`${url}?t=${Date.now()}`, { cache: "no-store" });
-  if (!response.ok) {
-    throw new Error(`Failed to fetch PDF (${response.status})`);
+function detectBaseType(baseLines: string[]): Recipe["base"]["type"] {
+  const text = baseLines.join(" ").toLowerCase();
+  if (/cheesecake/i.test(text)) return "cheesecake";
+  if (/graham/i.test(text)) return "graham";
+  if (/chocolate (ice cream )?mix/i.test(text)) return "chocolate";
+  if (/sorbet/i.test(text)) return "sorbet";
+  if (/sherbet/i.test(text)) return "sherbet";
+  if (/vegan|oat milk|coconut milk/i.test(text)) return "vegan";
+  return "plain";
+}
+
+function isInstructionalLine(line: string): boolean {
+  const t = line.trim();
+  if (!t) return true;
+  if (/^pour the following/i.test(t)) return true;
+  if (/^fold-?in the below/i.test(t)) return true;
+  if (/^before turning/i.test(t)) return true;
+  if (/^halfway through/i.test(t)) return true;
+  if (/^using the/i.test(t)) return true;
+  if (/^after the freezing/i.test(t)) return true;
+  return false;
+}
+
+function parseIngredient(line: string): { name: string; quantity: string } | null {
+  const t = line.trim();
+  if (!t) return null;
+  // Match leading quantity like "1 2.5 Ga", "8 cups", "1 1/2 qts", "36 oz", "1/2 cup"
+  const m = t.match(
+    /^(\d+(\s+\d+)?(\s*\/\s*\d+)?\s+\d*\.?\d*\s*(ga|gal|gallon|qt|qts|cup|cups|oz|lb|lbs|tbsp|tsp|piece|pieces|pcs|each)?\b\s*)/i
+  );
+  if (m) {
+    const quantity = m[1].trim();
+    const name = t.slice(m[0].length).trim();
+    if (name) return { name, quantity };
   }
-  const buffer = Buffer.from(await response.arrayBuffer());
-  return parsePdfBuffer(buffer);
-}
-
-function parseRecipeText(text: string): Recipe[] {
-  const recipes: Recipe[] = [];
-  const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
-
-  let currentRecipe: Partial<Recipe> | null = null;
-  let section: "base" | "addins" | "foldins" | "none" = "none";
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-
-    if (isRecipeHeader(line, lines[i + 1])) {
-      if (currentRecipe?.name) {
-        recipes.push(finalizeRecipe(currentRecipe));
-      }
-      currentRecipe = {
-        name: cleanRecipeName(line),
-        base: { type: "plain", ingredients: [] },
-        addIns: [],
-        foldIns: [],
-        allergens: [],
-        eligible44qt: true,
-        notes: null,
-      };
-      section = "base";
-      continue;
-    }
-
-    if (!currentRecipe) continue;
-
-    if (/add.?in/i.test(line) || /mix.?in/i.test(line)) {
-      section = "addins";
-      continue;
-    }
-    if (/fold.?in/i.test(line) || /swirl/i.test(line) || /ribbon/i.test(line)) {
-      section = "foldins";
-      continue;
-    }
-
-    if (section === "base" && currentRecipe.base) {
-      currentRecipe.base.ingredients.push(line);
-      if (/chocolate|cocoa/i.test(line)) currentRecipe.base.type = "chocolate";
-      if (/sorbet/i.test(line)) currentRecipe.base.type = "sorbet";
-      if (/sherbet/i.test(line)) currentRecipe.base.type = "sherbet";
-      if (/vegan|oat|coconut milk/i.test(line)) currentRecipe.base.type = "vegan";
-      if (/graham/i.test(line)) currentRecipe.base.type = "graham";
-      if (/cheesecake/i.test(line)) currentRecipe.base.type = "cheesecake";
-    } else if (section === "addins") {
-      const parsed = parseIngredientLine(line);
-      if (parsed) {
-        currentRecipe.addIns!.push({
-          name: parsed.name,
-          quantity: parsed.quantity,
-          taTrigger: getTaTrigger(parsed.name),
-        });
-      }
-    } else if (section === "foldins") {
-      const parsed = parseIngredientLine(line);
-      if (parsed) {
-        currentRecipe.foldIns!.push({
-          name: parsed.name,
-          quantity: parsed.quantity,
-        });
-        currentRecipe.eligible44qt = false;
-      }
-    }
-  }
-
-  if (currentRecipe?.name) {
-    recipes.push(finalizeRecipe(currentRecipe));
-  }
-
-  return recipes;
-}
-
-function isRecipeHeader(line: string, nextLine?: string): boolean {
-  if (!line || line.length < 3 || line.length > 60) return false;
-  if (/^\d+(\.\d+)?\s*(qt|oz|lb|cup|gal)/i.test(line)) return false;
-  if (/^(add|fold|mix|swirl|ribbon)/i.test(line)) return false;
-  const hasUpperStart = /^[A-Z]/.test(line);
-  const looksLikeTitle = !/^\d/.test(line) && !line.includes("=");
-  return hasUpperStart && looksLikeTitle && line.split(" ").length <= 8;
-}
-
-function cleanRecipeName(line: string): string {
-  return line.replace(/[*#_]/g, "").trim();
-}
-
-function parseIngredientLine(line: string): { name: string; quantity: string } | null {
-  const match = line.match(/^(.+?)\s*[-–—]\s*(.+)$/);
-  if (match) return { name: match[1].trim(), quantity: match[2].trim() };
-
-  const qtyMatch = line.match(/^(.+?)\s+(\d+[\d./]*\s*(qt|oz|lb|cup|gal|each|pc)s?)/i);
-  if (qtyMatch) return { name: qtyMatch[1].trim(), quantity: qtyMatch[2].trim() };
-
-  if (line.length > 2 && line.length < 50) {
-    return { name: line, quantity: "as needed" };
+  // Fallback: leading number(s) at start, rest is name
+  const m2 = t.match(/^([\d/.\s]+\s*\w+)\s+(.+)$/);
+  if (m2) {
+    return { name: m2[2].trim(), quantity: m2[1].trim() };
   }
   return null;
 }
 
-function getTaTrigger(ingredient: string): "always" | "conditional" | "none" {
-  const lower = ingredient.toLowerCase();
-  if (ALWAYS_TA_INGREDIENTS.some((t) => lower.includes(t))) return "always";
-  if (CONDITIONAL_TA_INGREDIENTS.some((t) => lower.includes(t))) return "conditional";
-  return "none";
-}
-
-function finalizeRecipe(partial: Partial<Recipe>): Recipe {
-  const recipe: Recipe = {
-    name: partial.name || "Unknown",
-    base: partial.base || { type: "plain", ingredients: [] },
-    addIns: partial.addIns || [],
-    foldIns: partial.foldIns || [],
-    allergens: detectAllergens(partial),
-    eligible44qt: partial.eligible44qt !== false && (partial.foldIns?.length || 0) === 0,
-    notes: partial.notes || null,
-  };
-
-  if (recipe.base.type === "sorbet" || recipe.base.type === "sherbet") {
-    recipe.eligible44qt = false;
+function findSection(text: string, header: (typeof SECTION_HEADERS)[number]): string | null {
+  const idx = text.indexOf(header);
+  if (idx < 0) return null;
+  let endIdx = text.length;
+  for (const next of SECTION_HEADERS) {
+    if (next === header) continue;
+    const j = text.indexOf(next, idx + header.length);
+    if (j > -1 && j < endIdx) endIdx = j;
   }
-
-  return recipe;
+  return text.slice(idx + header.length, endIdx).trim();
 }
 
-function detectAllergens(partial: Partial<Recipe>): string[] {
-  const allergens = new Set<string>();
-  const allText = [
-    ...(partial.base?.ingredients || []),
-    ...(partial.addIns?.map((a) => a.name) || []),
-    ...(partial.foldIns?.map((f) => f.name) || []),
-  ]
-    .join(" ")
-    .toLowerCase();
+function getIngredientLines(section: string): string[] {
+  // Split by line breaks first; if the section is one long line, split on the
+  // pattern "<digits>... <Capitalized word>" — quantities always start with a digit.
+  let lines = section.split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !isInstructionalLine(l));
+  if (lines.length <= 1 && section.trim().length > 0) {
+    // Single line — split before each new quantity
+    const t = section.replace(/^\s*Pour[^.]+\.\s*/i, "").replace(/^\s*Fold-?in[^.]+\.\s*/i, "");
+    lines = t
+      .split(/(?=\b\d+(?:\s+\d+)?(?:\s*\/\s*\d+)?\s+(?:ga|gal|qt|cup|oz|lb|tbsp|tsp)\b)/i)
+      .map((l) => l.trim())
+      .filter((l) => l && !isInstructionalLine(l) && /^\d/.test(l));
+  }
+  return lines;
+}
 
-  if (/peanut|pb/i.test(allText)) allergens.add("Peanut");
-  if (/almond|walnut|pecan|cashew|pistachio|hazelnut|macadamia|tree.?nut/i.test(allText))
-    allergens.add("Tree Nuts");
-  if (/wheat|flour|cookie|brownie|cake|graham/i.test(allText)) allergens.add("Wheat");
-  if (/egg/i.test(allText)) allergens.add("Egg");
-  if (/soy/i.test(allText)) allergens.add("Soy");
+function parseAllergens(section: string | null): string[] {
+  if (!section) return [];
+  // Allergens are usually a comma-separated list followed by boilerplate.
+  // Take the first sentence/line.
+  const firstLine = section.split(/[\n.]/)[0];
+  return firstLine
+    .split(/,|\sand\s/i)
+    .map((s) => s.trim())
+    .filter(
+      (s) =>
+        s.length > 0 &&
+        s.length < 60 &&
+        !/derivative/i.test(s) &&
+        !/our products/i.test(s)
+    )
+    .map((s) => s.replace(/\s+derivatives?$/i, "").trim())
+    .filter(Boolean);
+}
 
-  return Array.from(allergens);
+function parsePage(pageText: string): Recipe | null {
+  // Split into lines and find the recipe name (first non-empty line).
+  const lines = pageText.split(/\r?\n/).map((l) => l.trim());
+  const firstNonEmpty = lines.find((l) => l.length > 0);
+  if (!firstNonEmpty) return null;
+  // Skip pages that don't look like recipes (no Base Flavors marker).
+  if (!pageText.includes("Base Flavors:")) return null;
+
+  const name = firstNonEmpty;
+
+  const baseSection = findSection(pageText, "Base Flavors:");
+  const addInsSection = findSection(pageText, "Add Ins:");
+  const foldInsSection = findSection(pageText, "Fold Ins:");
+  const allergensSection = findSection(pageText, "Allergens:");
+
+  const baseLines = baseSection ? getIngredientLines(baseSection) : [];
+  const addInLines = addInsSection ? getIngredientLines(addInsSection) : [];
+  const foldInLines = foldInsSection ? getIngredientLines(foldInsSection) : [];
+
+  const baseType = detectBaseType(baseLines);
+  const addIns = addInLines
+    .map(parseIngredient)
+    .filter((x): x is { name: string; quantity: string } => x !== null)
+    .map(({ name, quantity }) => ({
+      name,
+      quantity,
+      taTrigger: getTaTrigger(name),
+    }));
+
+  const foldIns = foldInLines
+    .map(parseIngredient)
+    .filter((x): x is { name: string; quantity: string } => x !== null);
+
+  const allergens = parseAllergens(allergensSection);
+  const eligible44qt =
+    foldIns.length === 0 && baseType !== "sorbet" && baseType !== "sherbet";
+
+  return {
+    name,
+    base: { type: baseType, ingredients: baseLines },
+    addIns,
+    foldIns,
+    allergens,
+    eligible44qt,
+    notes: null,
+  };
+}
+
+export async function parsePdfBuffer(buffer: Buffer): Promise<Recipe[]> {
+  const pages = await extractPagesFromBuffer(buffer);
+  const recipes: Recipe[] = [];
+  for (const page of pages) {
+    const recipe = parsePage(page);
+    if (recipe) recipes.push(recipe);
+  }
+  return recipes;
+}
+
+export async function parsePdfFromUrl(url: string): Promise<Recipe[]> {
+  const response = await fetch(`${url}?t=${Date.now()}`, { cache: "no-store" });
+  if (!response.ok) throw new Error(`Failed to fetch PDF (${response.status})`);
+  const buffer = Buffer.from(await response.arrayBuffer());
+  return parsePdfBuffer(buffer);
 }
 
 export function fuzzyMatchRecipe(input: string, recipes: Recipe[]): Recipe | null {
@@ -218,7 +236,9 @@ export function fuzzyMatchRecipe(input: string, recipes: Recipe[]): Recipe | nul
   const words = normalized.split(/\s+/);
   const scored = recipes.map((r) => {
     const rWords = r.name.toLowerCase().split(/\s+/);
-    const matchCount = words.filter((w) => rWords.some((rw) => rw.includes(w) || w.includes(rw))).length;
+    const matchCount = words.filter((w) =>
+      rWords.some((rw) => rw.includes(w) || w.includes(rw))
+    ).length;
     return { recipe: r, score: matchCount / Math.max(words.length, rWords.length) };
   });
   scored.sort((a, b) => b.score - a.score);
