@@ -307,27 +307,40 @@ function enforceRunCounts(
     machine.tubs_per_run = perRun;
     const machineReqs = required.get(machine.name) ?? new Map();
 
-    // Count current runs per flavor in Claude's output
-    const currentCounts = new Map<string, number>();
-    for (const run of machine.runs) {
-      const key = run.flavor.toLowerCase().trim();
-      currentCounts.set(key, (currentCounts.get(key) || 0) + 1);
+    // Build fuzzy matcher: Claude's output name → our canonical requirement key
+    const reqKeys = Array.from(machineReqs.keys());
+    function matchToReqKey(flavorName: string): string | null {
+      const key = flavorName.toLowerCase().trim();
+      // Exact match
+      if (machineReqs.has(key)) return key;
+      // Normalized (strip spaces, punctuation)
+      const norm = key.replace(/[\s\-'']/g, "");
+      for (const rk of reqKeys) {
+        if (rk.replace(/[\s\-'']/g, "") === norm) return rk;
+      }
+      // Substring: Claude's name contains our key or vice versa
+      for (const rk of reqKeys) {
+        const rkNorm = rk.replace(/[\s\-'']/g, "");
+        if (rkNorm.includes(norm) || norm.includes(rkNorm)) return rk;
+      }
+      return null;
     }
 
     // Fix: remove excess runs or add missing runs
     const fixedRuns: typeof machine.runs = [];
-    const seen = new Map<string, number>(); // key → runs added so far
+    const seen = new Map<string, number>(); // reqKey → runs added so far
 
     // First pass: keep Claude's runs in order, but cap at required count
     for (const run of machine.runs) {
-      const key = run.flavor.toLowerCase().trim();
-      const req = machineReqs.get(key);
-      if (!req) continue; // flavor shouldn't be on this machine — drop it
-      const soFar = seen.get(key) || 0;
+      const reqKey = matchToReqKey(run.flavor);
+      if (!reqKey) continue; // flavor shouldn't be on this machine — drop it
+      const req = machineReqs.get(reqKey)!;
+      const soFar = seen.get(reqKey) || 0;
       if (soFar < req.runs) {
         run.tubs = perRun;
+        run.flavor = req.recipe.name; // normalize to canonical name
         fixedRuns.push(run);
-        seen.set(key, soFar + 1);
+        seen.set(reqKey, soFar + 1);
       }
       // else: excess run — dropped
     }
@@ -341,9 +354,9 @@ function enforceRunCounts(
           flavor: req.recipe.name,
           tubs: perRun,
           clean_after: "RINSE",
-          reason: "Auto-added (missing from AI output)",
+          reason: "Sequenced by system — verify cleaning step",
           chain_badge: false,
-          flags: [],
+          flags: ["auto-placed"],
         });
         seen.set(key, (seen.get(key) || 0) + 1);
       }
