@@ -202,7 +202,8 @@ ${JSON.stringify(rules.sequencing_rules, null, 2)}
 ${JSON.stringify(rules.optimization_rules, null, 2)}
 
 ## 44 QT MACHINE RULES
-${JSON.stringify(rules.forty_four_qt_rules, null, 2)}
+${rules.forty_four_qt_rule}
+${(rules.forty_four_qt_callouts || []).map((c) => `- (${c.type.toUpperCase()}) ${c.text}`).join("\n")}
 
 ## RECIPE-SPECIFIC NOTES
 ${JSON.stringify(rules.recipe_notes, null, 2)}

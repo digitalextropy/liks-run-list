@@ -1,66 +1,65 @@
+export type CalloutType = "info" | "warning" | "critical" | "success";
+
+export interface Callout {
+  type: CalloutType;
+  text: string;
+}
+
 export interface Machine {
   name: string;
   capacity_gallons: number;
   tubs_per_run: number;
-  notes: string;
+  rules: string;
+  warnings: string[];
+  highlight?: boolean;
 }
 
 export interface CleaningTier {
   name: string;
   level: "NO_CLEAN" | "WATER_RINSE" | "RINSE" | "TAKE_APART";
+  definition: string;
   description: string;
   duration_minutes: number;
 }
 
 export interface TATrigger {
-  ingredient: string;
-  category: "always" | "conditional" | "never";
-  condition?: string;
-}
-
-export interface AllergenRule {
-  allergen: string;
-  rule: string;
-  sequencing: string;
-}
-
-export interface SequencingRule {
-  category: string;
-  rule: string;
-  priority: number;
-}
-
-export interface OptimizationRule {
   name: string;
-  description: string;
-  example?: string;
-}
-
-export interface FortyFourQtRule {
-  rule: string;
-  exceptions: string[];
+  category: "always" | "conditional" | "never" | "dissolving";
+  note?: string;
 }
 
 export interface RecipeNote {
   recipe: string;
   note: string;
-  override?: string;
 }
 
-export interface DayStructure {
+export interface DayPhase {
+  order: number;
   phase: string;
   description: string;
-  order: number;
 }
 
 export interface ProductionRules {
   machines: Machine[];
+  machines_callouts: Callout[];
+
   cleaning_tiers: CleaningTier[];
+  cleaning_tiers_callouts: Callout[];
+
   ta_triggers: TATrigger[];
-  allergen_rules: AllergenRule[];
-  sequencing_rules: SequencingRule[];
-  optimization_rules: OptimizationRule[];
-  forty_four_qt_rules: FortyFourQtRule;
+  ta_triggers_callouts_top: Callout[];
+  ta_triggers_callouts_bottom: Callout[];
+  ta_triggers_dissolving_intro: string;
+
+  allergen_rules: string[];
+  allergen_rules_callouts: Callout[];
+
+  sequencing_rules: string[];
+  optimization_rules: string[];
+
+  forty_four_qt_rule: string;
+  forty_four_qt_callouts: Callout[];
+
   recipe_notes: RecipeNote[];
-  day_structure: DayStructure[];
+  day_structure: DayPhase[];
 }
