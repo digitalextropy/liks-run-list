@@ -115,6 +115,8 @@ export default function GeneratePage() {
   const [picks, setPicks] = useState<Record<string, string>>({});
   const [warnings, setWarnings] = useState<string[]>([]);
   const [runList, setRunList] = useState<RunListOutput | null>(null);
+  const [tubAccounting, setTubAccounting] = useState<RunListOutput["_tubAccounting"] | null>(null);
+  const [totalsCheck, setTotalsCheck] = useState<RunListOutput["_totalsCheck"] | null>(null);
   const [pdfVerified, setPdfVerified] = useState<Set<string>>(new Set());
   const [validating, setValidating] = useState(false);
   const [generating, setGenerating] = useState(false);
@@ -164,6 +166,8 @@ export default function GeneratePage() {
     setPicks({});
     setWarnings([]);
     setPdfVerified(new Set());
+    setTubAccounting(null);
+    setTotalsCheck(null);
     setError("");
     clearPersisted();
   }
@@ -328,6 +332,15 @@ export default function GeneratePage() {
         );
         return;
       }
+      const tubWarnings: string[] = data?._tubWarnings ?? [];
+      if (tubWarnings.length > 0) {
+        setWarnings((prev) => [
+          ...prev,
+          ...tubWarnings.map((w: string) => `Tub count mismatch — ${w}`),
+        ]);
+      }
+      setTubAccounting(data?._tubAccounting ?? null);
+      setTotalsCheck(data?._totalsCheck ? { ...data._totalsCheck, retried: data._retried ?? false } : null);
       setRunList(data);
       setValidated(null); // hide picker once runlist is shown
     } catch (e) {
@@ -515,6 +528,138 @@ export default function GeneratePage() {
             </button>
           </div>
           <RunListTable data={runList} pdfVerified={pdfVerified} />
+          <TubAccountingPanel accounting={tubAccounting} totalsCheck={totalsCheck} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TubAccountingPanel({
+  accounting,
+  totalsCheck,
+}: {
+  accounting: RunListOutput["_tubAccounting"] | null;
+  totalsCheck: RunListOutput["_totalsCheck"] | null;
+}) {
+  const [open, setOpen] = useState(false);
+
+  if (!accounting || !totalsCheck) return null;
+
+  const hasMismatch = totalsCheck.requested !== totalsCheck.scheduled || accounting.some((a) => !a.ok);
+  const defaultOpen = hasMismatch;
+
+  // Use defaultOpen on mount
+  const wasOpened = useRef(false);
+  if (!wasOpened.current && defaultOpen) {
+    wasOpened.current = true;
+  }
+  const isOpen = open || (defaultOpen && !wasOpened.current === false);
+
+  return (
+    <div className={`print:hidden rounded-lg border ${hasMismatch ? "border-red-300 bg-red-50" : "border-gray-200 bg-gray-50"}`}>
+      <button
+        onClick={() => setOpen(!open)}
+        className="w-full flex items-center justify-between px-4 py-2.5 text-left"
+      >
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-semibold text-gray-700">Tub Accounting</span>
+          {hasMismatch ? (
+            <span className="text-xs font-bold text-red-600 bg-red-100 px-2 py-0.5 rounded">
+              ⚠ Mismatch detected
+            </span>
+          ) : (
+            <span className="text-xs font-medium text-green-700 bg-green-100 px-2 py-0.5 rounded">
+              ✓ All tubs accounted
+            </span>
+          )}
+          <span className="text-xs text-gray-500">
+            {totalsCheck.scheduled} / {totalsCheck.requested} tubs scheduled
+            {totalsCheck.claudeReported !== totalsCheck.scheduled && (
+              <span className="text-orange-600 ml-1">
+                (Claude reported {totalsCheck.claudeReported})
+              </span>
+            )}
+          </span>
+          {totalsCheck.retried && (
+            <span className="text-xs text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded">
+              auto-corrected
+            </span>
+          )}
+        </div>
+        <span className={`text-gray-400 text-sm transition-transform ${open || defaultOpen ? "rotate-180" : ""}`}>▾</span>
+      </button>
+
+      {(open || defaultOpen) && (
+        <div className="px-4 pb-3 space-y-2">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-gray-500 border-b border-gray-200">
+                <th className="text-left py-1 font-medium">Recipe</th>
+                <th className="text-right py-1 font-medium w-20">Requested</th>
+                <th className="text-right py-1 font-medium w-20">Scheduled</th>
+                <th className="text-right py-1 font-medium w-24">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {accounting.map((a, i) => (
+                <tr key={i} className={`border-b border-gray-100 last:border-0 ${!a.ok ? "bg-red-50" : ""}`}>
+                  <td className="py-1 text-gray-800">
+                    {a.name}
+                    {a.matchedAs && (
+                      <span className="text-gray-400 ml-1">(matched as "{a.matchedAs}")</span>
+                    )}
+                  </td>
+                  <td className="py-1 text-right text-gray-600">{a.requested}</td>
+                  <td className={`py-1 text-right font-semibold ${a.ok ? "text-green-700" : "text-red-600"}`}>
+                    {a.scheduled}
+                  </td>
+                  <td className="py-1 text-right">
+                    {a.ok ? (
+                      <span className="text-green-600">✓</span>
+                    ) : (
+                      <span className="text-red-600 font-semibold">
+                        {a.scheduled === 0 ? "NOT SCHEDULED" : `missing ${a.requested - a.scheduled}`}
+                      </span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr className="border-t-2 border-gray-300 font-semibold">
+                <td className="py-1.5 text-gray-700">Total</td>
+                <td className="py-1.5 text-right text-gray-700">{totalsCheck.requested}</td>
+                <td className={`py-1.5 text-right ${totalsCheck.requested === totalsCheck.scheduled ? "text-green-700" : "text-red-600"}`}>
+                  {totalsCheck.scheduled}
+                </td>
+                <td className="py-1.5 text-right">
+                  {totalsCheck.requested === totalsCheck.scheduled ? (
+                    <span className="text-green-600">✓</span>
+                  ) : (
+                    <span className="text-red-600 font-semibold">
+                      {totalsCheck.requested - totalsCheck.scheduled} missing
+                    </span>
+                  )}
+                </td>
+              </tr>
+            </tfoot>
+          </table>
+
+          {totalsCheck.allFlavorsSeen.length > 0 && (
+            <details className="mt-2">
+              <summary className="text-xs text-gray-400 cursor-pointer hover:text-gray-600">
+                Flavor names seen in run list ({totalsCheck.allFlavorsSeen.length})
+              </summary>
+              <div className="mt-1 flex flex-wrap gap-1">
+                {totalsCheck.allFlavorsSeen.map((f, i) => (
+                  <span key={i} className="text-xs bg-white border border-gray-200 rounded px-1.5 py-0.5 text-gray-600">
+                    {f}
+                  </span>
+                ))}
+              </div>
+            </details>
+          )}
         </div>
       )}
     </div>

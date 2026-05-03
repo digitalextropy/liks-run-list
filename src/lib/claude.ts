@@ -178,6 +178,10 @@ export interface RunListOutput {
     water_rinses: number;
     no_cleans: number;
   };
+  _tubWarnings?: string[];
+  _tubAccounting?: { name: string; requested: number; scheduled: number; matchedAs: string | null; ok: boolean }[];
+  _totalsCheck?: { requested: number; scheduled: number; claudeReported: number; allFlavorsSeen: string[]; retried?: boolean };
+  _retried?: boolean;
 }
 
 function buildSystemPrompt(rules: ProductionRules): string {
@@ -269,14 +273,77 @@ You MUST respond with ONLY valid JSON matching this exact schema (no markdown, n
 Optimize for fewest total take-aparts while respecting all safety and allergen rules.`;
 }
 
+function checkTubCounts(
+  result: RunListOutput,
+  recipes: RecipeRequest[]
+): { errors: string[]; scheduledByFlavor: Record<string, number> } {
+  const scheduledByFlavor: Record<string, number> = {};
+  for (const machine of result.machines) {
+    for (const run of machine.runs) {
+      const key = run.flavor.toLowerCase().trim();
+      scheduledByFlavor[key] = (scheduledByFlavor[key] || 0) + run.tubs;
+    }
+  }
+
+  const errors: string[] = [];
+  for (const r of recipes) {
+    // Try exact match, then normalized (spaces stripped)
+    const exact = scheduledByFlavor[r.name.toLowerCase().trim()];
+    let scheduled = exact;
+    if (scheduled === undefined) {
+      const norm = r.name.toLowerCase().replace(/\s+/g, "");
+      for (const [k, v] of Object.entries(scheduledByFlavor)) {
+        if (k.replace(/\s+/g, "") === norm) { scheduled = v; break; }
+      }
+    }
+    scheduled = scheduled ?? 0;
+    if (scheduled !== r.tubs) {
+      errors.push(
+        `"${r.name}": requested ${r.tubs} tubs but scheduled ${scheduled} (${scheduled > r.tubs ? "over by" : "under by"} ${Math.abs(r.tubs - scheduled)})`
+      );
+    }
+  }
+  return { errors, scheduledByFlavor };
+}
+
+function parseRunListJson(text: string): RunListOutput {
+  const jsonMatch = text.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) throw new Error(`No JSON found. Raw: ${text.slice(0, 300)}`);
+  return JSON.parse(jsonMatch[0]) as RunListOutput;
+}
+
 export async function generateRunList(
   recipes: RecipeRequest[],
   rules: ProductionRules
-): Promise<RunListOutput> {
+): Promise<RunListOutput & { _retried?: boolean }> {
   const systemPrompt = buildSystemPrompt(rules);
 
-  const userMessage = `Generate an optimized production run list for the following recipes:
+  const tubSummary = recipes
+    .map((r) => {
+      const runsNeeded: Record<string, number> = {};
+      for (const m of rules.machines) {
+        runsNeeded[m.name] = Math.ceil(r.tubs / m.tubs_per_run);
+      }
+      return `  ${r.name}: ${r.tubs} tubs (${rules.machines.map((m) => `${runsNeeded[m.name]} run${runsNeeded[m.name] === 1 ? "" : "s"} on ${m.name}`).join(" OR ")})`;
+    })
+    .join("\n");
 
+  const userMessage = `Generate an optimized production run list for the following recipes.
+
+CRITICAL: The tub counts below are non-negotiable. Every single tub must appear in the output.
+- Each machine run produces exactly tubs_per_run tubs (Batch A/B = 2 tubs/run, 44 QT = 4 tubs/run).
+- A flavor assigned to Batch A/B with 4 tubs = 2 consecutive runs of 2 tubs each.
+- A flavor assigned to 44 QT with 4 tubs = exactly 1 run of 4 tubs.
+- A flavor assigned to 44 QT with 8 tubs = exactly 2 runs of 4 tubs each.
+- DO NOT schedule the same flavor on multiple machines unless you split the tubs intentionally and they add up to exactly the requested count.
+- After building the schedule, verify: for each flavor, sum tubs across ALL machines = requested amount exactly.
+
+REQUIRED TUB COUNTS (non-negotiable — total across all machines):
+${tubSummary}
+
+Grand total: ${recipes.reduce((sum, r) => sum + r.tubs, 0)} tubs
+
+RECIPES:
 ${recipes.map((r) => `- ${r.name}: ${r.tubs} tubs
   Base: ${r.recipe.base.type} (${r.recipe.base.ingredients.join(", ")})
   Add-ins: ${r.recipe.addIns.map((a) => `${a.name} [${a.taTrigger} TA]`).join(", ") || "none"}
@@ -284,31 +351,55 @@ ${recipes.map((r) => `- ${r.name}: ${r.tubs} tubs
   Allergens: ${r.recipe.allergens.join(", ") || "none"}
   44QT eligible: ${r.recipe.eligible44qt}`).join("\n\n")}
 
-Total recipes: ${recipes.length}
-Total tubs: ${recipes.reduce((sum, r) => sum + r.tubs, 0)}
-
 Assign to machines and sequence optimally. Return JSON only.`;
 
-  const response = await client.messages.create({
+  // First attempt
+  const firstResponse = await client.messages.create({
     model: "claude-sonnet-4-6",
     max_tokens: 8000,
     system: systemPrompt,
     messages: [{ role: "user", content: userMessage }],
   });
 
-  const text = response.content[0].type === "text" ? response.content[0].text : "";
-  const jsonMatch = text.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) {
-    throw new Error(
-      `Claude returned no JSON. Raw response: ${text.slice(0, 300)}`
-    );
+  const firstText = firstResponse.content[0].type === "text" ? firstResponse.content[0].text : "";
+  let result: RunListOutput;
+  try {
+    result = parseRunListJson(firstText);
+  } catch (e) {
+    throw new Error(`Claude returned invalid JSON: ${e instanceof Error ? e.message : String(e)}`);
   }
 
+  // Check tub counts — retry once if wrong
+  const { errors } = checkTubCounts(result, recipes);
+  if (errors.length === 0) return result;
+
+  const correctionMessage = `Your run list has tub count errors. Fix ONLY these issues and return the corrected complete JSON:
+
+${errors.map((e) => `- ${e}`).join("\n")}
+
+Rules for fixing:
+- If a flavor is over-scheduled (appears on multiple machines when it shouldn't): remove it from the machine where it doesn't belong.
+- If a flavor is under-scheduled: add the missing runs in the correct position (respecting sequencing and allergen rules).
+- Do NOT change any correctly scheduled flavors.
+- Keep all flavor names EXACTLY as given in the original recipe list (do not abbreviate).
+- Return ONLY the corrected JSON, no explanation.`;
+
+  const retryResponse = await client.messages.create({
+    model: "claude-sonnet-4-6",
+    max_tokens: 8000,
+    system: systemPrompt,
+    messages: [
+      { role: "user", content: userMessage },
+      { role: "assistant", content: firstText },
+      { role: "user", content: correctionMessage },
+    ],
+  });
+
+  const retryText = retryResponse.content[0].type === "text" ? retryResponse.content[0].text : "";
   try {
-    return JSON.parse(jsonMatch[0]) as RunListOutput;
+    return { ...parseRunListJson(retryText), _retried: true };
   } catch (e) {
-    throw new Error(
-      `Claude returned invalid JSON: ${e instanceof Error ? e.message : String(e)}`
-    );
+    // Retry also failed to parse — return original with errors visible to caller
+    return result;
   }
 }

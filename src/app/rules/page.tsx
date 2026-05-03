@@ -878,23 +878,50 @@ function TriggerCategoryBlock({
   inline?: boolean;
 }) {
   const colorClasses = {
-    red: { dot: "bg-red-500", title: "bg-red-50 text-red-700 border-red-200" },
-    amber: { dot: "bg-amber-500", title: "bg-amber-50 text-amber-700 border-amber-200" },
-    green: { dot: "bg-green-500", title: "bg-green-50 text-green-700 border-green-200" },
-    blue: { dot: "bg-blue-500", title: "bg-blue-50 text-blue-700 border-blue-200" },
+    red: { dot: "bg-red-500", title: "bg-red-50 text-red-700 border-red-200", btn: "text-red-500 hover:bg-red-100" },
+    amber: { dot: "bg-amber-500", title: "bg-amber-50 text-amber-700 border-amber-200", btn: "text-amber-500 hover:bg-amber-100" },
+    green: { dot: "bg-green-500", title: "bg-green-50 text-green-700 border-green-200", btn: "text-green-600 hover:bg-green-100" },
+    blue: { dot: "bg-blue-500", title: "bg-blue-50 text-blue-700 border-blue-200", btn: "text-blue-500 hover:bg-blue-100" },
   } as const;
 
   const triggers = ctx.rules.ta_triggers
     .map((t, idx) => ({ t, idx }))
     .filter(({ t }) => t.category === category);
 
+  function addToCategory() {
+    ctx.update("ta_triggers", [
+      ...ctx.rules.ta_triggers,
+      { name: "New item", category },
+    ]);
+  }
+
   return (
     <div className={inline ? "" : "mt-3"}>
       {!inline && title && (
-        <div
-          className={`inline-block px-2.5 py-1 rounded text-xs font-semibold border ${colorClasses[color].title} mb-2`}
-        >
-          {title}
+        <div className="flex items-center gap-2 mb-2">
+          <div
+            className={`inline-block px-2.5 py-1 rounded text-xs font-semibold border ${colorClasses[color].title}`}
+          >
+            {title}
+          </div>
+          <button
+            onClick={addToCategory}
+            title={`Add to ${category}`}
+            className={`w-5 h-5 rounded flex items-center justify-center text-sm font-bold leading-none transition-colors ${colorClasses[color].btn}`}
+          >
+            +
+          </button>
+        </div>
+      )}
+      {inline && (
+        <div className="flex justify-end mb-1">
+          <button
+            onClick={addToCategory}
+            title="Add dissolving item"
+            className={`w-5 h-5 rounded flex items-center justify-center text-sm font-bold leading-none transition-colors ${colorClasses[color].btn}`}
+          >
+            +
+          </button>
         </div>
       )}
       {triggers.length === 0 && (
