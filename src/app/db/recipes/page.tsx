@@ -535,7 +535,6 @@ function CompositionSection({
   rows,
   onChange,
   ingredients,
-  unitOptions,
   color,
 }: {
   title: string;
