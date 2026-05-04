@@ -312,7 +312,7 @@ export default function IngredientsPage() {
             Select an ingredient or click &quot;+ New&quot; to get started
           </div>
         ) : (
-          <>
+          <div className="space-y-4">
           <div className="border rounded-lg p-5 space-y-4 bg-white shadow-sm">
             <h2 className="text-lg font-medium text-gray-800">
               {isNew ? "New Ingredient" : "Edit Ingredient"}
@@ -521,7 +521,7 @@ export default function IngredientsPage() {
                 </ul>
               </div>
             )}
-          </>
+          </div>
         )}
       </div>
     </div>

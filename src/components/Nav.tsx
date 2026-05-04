@@ -36,10 +36,10 @@ export default function Nav() {
           </div>
           <div className="flex items-center gap-1">
             <Link
-              href="/db/ingredients"
+              href="/db"
               className={linkClass(pathname.startsWith("/db"))}
             >
-              DB
+              Admin
             </Link>
           </div>
         </div>
