@@ -2,7 +2,7 @@
 CREATE TABLE IF NOT EXISTS products (
   id SERIAL PRIMARY KEY,
   legacy_id INTEGER UNIQUE,
-  sold_id VARCHAR(20),
+  sold_id VARCHAR(50),
   name VARCHAR(100) NOT NULL,
   tagline TEXT,
   notes TEXT,

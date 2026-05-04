@@ -338,6 +338,7 @@ export default function IngredientsPage() {
                   type="text"
                   value={form.item_name}
                   onChange={(e) => updateForm("item_name", e.target.value)}
+                  maxLength={200}
                   className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 />
               </div>
@@ -350,6 +351,7 @@ export default function IngredientsPage() {
                   type="text"
                   value={form.generic_name || ""}
                   onChange={(e) => updateForm("generic_name", e.target.value)}
+                  maxLength={100}
                   className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm uppercase focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 />
               </div>
