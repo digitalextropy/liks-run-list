@@ -7,6 +7,7 @@ interface IngredientRow {
   ingredient_id: number;
   item_name: string;
   item_cost: number | null;
+  item_unit: string | null;
   item_unit_qty: number | null;
   volume: string | null;
 }
@@ -203,11 +204,44 @@ function formatCost(cost: number | string | null): string {
   return `$${n.toFixed(2)}`;
 }
 
+const OZ_EQUIVALENTS: Record<string, number> = {
+  oz: 1, "fl oz": 1,
+  cup: 8, cups: 8,
+  qt: 32, qts: 32, quart: 32,
+  gal: 128, gals: 128, gallon: 128,
+};
+
+function convertToUnit(qty: number, fromUnit: string, toUnit: string): number {
+  const from = fromUnit.toLowerCase();
+  const to = toUnit.toLowerCase();
+  if (from === to) return qty;
+  const fromOz = OZ_EQUIVALENTS[from];
+  const toOz = OZ_EQUIVALENTS[to];
+  if (fromOz && toOz) return qty * fromOz / toOz;
+  return qty;
+}
+
 function lineCost(ing: IngredientRow): number {
   const cost = Number(ing.item_cost);
   if (!cost || isNaN(cost)) return 0;
   const perUnit = Number(ing.item_unit_qty) > 1 ? cost / Number(ing.item_unit_qty) : cost;
-  const recipeQty = parseFloat(ing.volume || "0") || 0;
+  const match = (ing.volume || "").match(/^([\d./\s]+)\s*(.*)$/);
+  if (!match) return perUnit;
+  let recipeQty = 0;
+  const parts = match[1].trim().split(/\s+/);
+  for (const p of parts) {
+    if (p.includes("/")) {
+      const [n, d] = p.split("/");
+      recipeQty += Number(n) / Number(d);
+    } else {
+      recipeQty += Number(p);
+    }
+  }
+  const volUnit = match[2].trim();
+  if (volUnit && ing.item_unit && ing.item_unit_qty) {
+    const qtyInPricingUnit = convertToUnit(recipeQty, volUnit, ing.item_unit);
+    return (cost / Number(ing.item_unit_qty)) * qtyInPricingUnit;
+  }
   return perUnit * (recipeQty || 1);
 }
 

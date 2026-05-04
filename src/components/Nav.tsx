@@ -18,11 +18,11 @@ export default function Nav() {
       <div className="max-w-7xl mx-auto px-4">
         <div className="flex items-center justify-between h-14">
           <div className="flex items-center gap-2">
-            <span className="text-white font-bold text-lg">Liks Run List</span>
+            <span className="text-white font-bold text-lg">Liks Production</span>
           </div>
           <div className="flex items-center gap-1">
             <Link href="/generate" className={linkClass(pathname === "/generate")}>
-              Generate
+              Run List
             </Link>
             <Link href="/rules" className={linkClass(pathname === "/rules")}>
               Rules
