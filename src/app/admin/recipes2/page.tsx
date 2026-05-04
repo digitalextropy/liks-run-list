@@ -88,7 +88,7 @@ function Recipes2Inner() {
   }
 
   return (
-    <div className="flex h-[calc(100vh-4rem)]">
+    <div className="flex h-[calc(100vh-4rem)] print:h-auto print:block">
       {/* Left panel - recipe list (hidden when printing) */}
       <div className="w-72 shrink-0 flex flex-col border-r border-gray-200 bg-white print:hidden">
         <div className="p-3 border-b border-gray-200">
@@ -167,8 +167,8 @@ function Recipes2Inner() {
             {/* All recipes (only visible when printing all) */}
             {printAll && (
               <div className="hidden print:block">
-                {recipes.map((r) => (
-                  <div key={r.id} className="break-after-page">
+                {recipes.map((r, i) => (
+                  <div key={r.id} className={i < recipes.length - 1 ? "break-after-page" : ""}>
                     <RecipeCard recipe={r} viewMode={viewMode} />
                   </div>
                 ))}
@@ -211,7 +211,7 @@ function RecipeCard({ recipe, viewMode }: { recipe: Recipe; viewMode: ViewMode }
       {/* Header */}
       <div className="flex items-center gap-4 px-6 py-4 border-b-2 border-[#1B2A4A] print:border-b-[1.5pt] print:px-5 print:py-3">
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={LOGO_SRC} alt="Liks" className="w-[72px] h-[72px] shrink-0 object-contain print:w-[68px] print:h-[68px]" />
+        <img src="/105901_liks_logo_BJ_DK_01.png" alt="Liks" className="w-[72px] h-[72px] shrink-0 object-contain print:w-[68px] print:h-[68px]" />
         <div className="flex-1 min-w-0">
           <div
             className="text-[1.8rem] font-bold text-[#1B2A4A] leading-tight print:text-[20pt]"
@@ -273,19 +273,6 @@ function RecipeCard({ recipe, viewMode }: { recipe: Recipe; viewMode: ViewMode }
         </div>
       )}
 
-      {/* Customer mode: just descriptions */}
-      {!showRecipe && recipe.notes && (
-        <div className="px-6 py-4 print:px-5 print:py-3">
-          <div className="border-[1.5px] border-[#C9A96E] rounded px-3.5 py-2.5 print:border-[1pt]">
-            <div className="text-[0.75rem] uppercase tracking-widest font-bold text-[#C9A96E] mb-1 print:text-[7pt]">
-              Notes
-            </div>
-            <p className="text-[0.92rem] text-gray-800 leading-snug whitespace-pre-line print:text-[9.5pt]">
-              {recipe.notes}
-            </p>
-          </div>
-        </div>
-      )}
 
       {/* Footer */}
       <div className="border-t-[1.5px] border-gray-300 px-6 py-2.5 print:px-5 print:py-2">
@@ -370,4 +357,3 @@ function IngredientSection({
   );
 }
 
-const LOGO_SRC = "data:image/png;base64,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";

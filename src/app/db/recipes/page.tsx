@@ -42,11 +42,6 @@ interface Recipe {
 
 const LABEL_TYPES = ["One Line", "Two Lines", "One Smaller Line"];
 
-const MEASURE_OPTIONS = [
-  "bag", "bags", "bottle", "box", "can", "case", "cup", "cups",
-  "fl oz", "gal", "gallon", "gals", "jar", "lb", "oz", "pack",
-  "pail", "qt", "qts", "quart", "tbsp",
-];
 
 // ─────────────────────────────────────────────────────────────────────────
 // Page
@@ -75,15 +70,19 @@ export default function RecipesPage() {
 
   const [isNew, setIsNew] = useState(false);
 
-  const fetchRecipes = useCallback(async () => {
+  const fetchRecipes = useCallback(async (): Promise<Recipe[]> => {
     try {
       const res = await fetch("/api/db/recipes");
       const data = await res.json();
-      setRecipes(data.recipes || []);
+      const list = data.recipes || [];
+      setRecipes(list);
+      setLoading(false);
+      return list;
     } catch {
       setMessage("Failed to load recipes");
+      setLoading(false);
+      return [];
     }
-    setLoading(false);
   }, []);
 
   const fetchIngredients = useCallback(async () => {
@@ -208,13 +207,17 @@ export default function RecipesPage() {
         setFormBases(formBases.filter((b) => b.ingredient_id));
         setFormAddins(formAddins.filter((a) => a.ingredient_id));
         setFormFoldins(formFoldins.filter((f) => f.ingredient_id));
-        await fetchRecipes();
         if (isNew) {
           const data = await res.json();
+          const updatedRecipes = await fetchRecipes();
           if (data.recipe) {
-            setSelected(data.recipe);
-            setIsNew(false);
+            const fullRecipe = updatedRecipes.find((r) => r.id === data.recipe.id);
+            if (fullRecipe) {
+              loadRecipeIntoForm(fullRecipe);
+            }
           }
+        } else {
+          await fetchRecipes();
         }
       } else {
         const data = await res.json();
@@ -247,15 +250,6 @@ export default function RecipesPage() {
     setSaving(false);
   }
 
-  const unitOptions = Array.from(
-    new Set([
-      ...MEASURE_OPTIONS,
-      ...(ingredients.map((i) => i.item_unit).filter(Boolean) as string[]),
-      ...formBases.map((r) => r.unit).filter(Boolean),
-      ...formAddins.map((r) => r.unit).filter(Boolean),
-      ...formFoldins.map((r) => r.unit).filter(Boolean),
-    ])
-  ).sort((a, b) => a.localeCompare(b));
 
   // Derived fields from current form state
   const allFormIngredients = [...formBases, ...formAddins, ...formFoldins].filter((r) => r.ingredient_id);
@@ -466,7 +460,7 @@ export default function RecipesPage() {
                 rows={formBases}
                 onChange={setFormBases}
                 ingredients={ingredients}
-                unitOptions={unitOptions}
+
                 color="indigo"
               />
               <CompositionSection
@@ -474,7 +468,7 @@ export default function RecipesPage() {
                 rows={formAddins}
                 onChange={setFormAddins}
                 ingredients={ingredients}
-                unitOptions={unitOptions}
+
                 color="violet"
               />
               <CompositionSection
@@ -482,7 +476,7 @@ export default function RecipesPage() {
                 rows={formFoldins}
                 onChange={setFormFoldins}
                 ingredients={ingredients}
-                unitOptions={unitOptions}
+
                 color="fuchsia"
               />
             </div>
@@ -548,7 +542,6 @@ function CompositionSection({
   rows: CompositionRow[];
   onChange: (rows: CompositionRow[]) => void;
   ingredients: IngredientOption[];
-  unitOptions: string[];
   color: "indigo" | "violet" | "fuchsia";
 }) {
   const colorClasses = {
@@ -593,7 +586,10 @@ function CompositionSection({
               ingredients={ingredients}
               value={row.ingredient_id}
               displayName={row.item_name}
-              onChange={(id, name) => updateRow(i, { ingredient_id: id, item_name: name })}
+              onChange={(id, name) => {
+                const ing = ingredients.find((ing) => ing.id === id);
+                updateRow(i, { ingredient_id: id, item_name: name, unit: ing?.item_unit || "" });
+              }}
             />
             <input
               type="text"
@@ -603,16 +599,9 @@ function CompositionSection({
               placeholder="Qty"
               className="w-16 px-2 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
             />
-            <select
-              value={row.unit}
-              onChange={(e) => updateRow(i, { unit: e.target.value })}
-              className="w-24 px-2 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-            >
-              <option value=""></option>
-              {unitOptions.map((u) => (
-                <option key={u} value={u}>{u}</option>
-              ))}
-            </select>
+            <span className="w-24 px-2 py-1 border border-gray-200 rounded text-sm bg-gray-50 text-gray-700 truncate">
+              {row.unit || <span className="text-gray-400">unit</span>}
+            </span>
             <button
               onClick={() => removeRow(i)}
               className="text-gray-400 hover:text-red-600 text-lg leading-none px-1"
