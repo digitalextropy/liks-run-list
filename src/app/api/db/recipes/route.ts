@@ -7,6 +7,7 @@ interface IngredientRow {
   position: number;
   volume: string | null;
   item_name: string;
+  item_cost: number | null;
   ingredient_text: string | null;
   allergen_alcohol: boolean;
   allergen_corn_syrup: boolean;
@@ -60,6 +61,7 @@ export async function GET() {
         pi.position,
         pi.volume,
         i.item_name,
+        i.item_cost,
         i.ingredient_text,
         i.allergen_alcohol,
         i.allergen_corn_syrup,
@@ -80,32 +82,17 @@ export async function GET() {
         (pi) => pi.product_id === product.id
       ) as unknown as (IngredientRow & { product_id: number })[];
 
-      const bases = productIngredients
-        .filter((pi) => pi.role === "base")
-        .map((pi) => ({
-          ingredient_id: pi.ingredient_id,
-          item_name: pi.item_name,
-          volume: pi.volume,
-          position: pi.position,
-        }));
+      const mapPi = (pi: IngredientRow & { product_id: number }) => ({
+        ingredient_id: pi.ingredient_id,
+        item_name: pi.item_name,
+        item_cost: pi.item_cost,
+        volume: pi.volume,
+        position: pi.position,
+      });
 
-      const addins = productIngredients
-        .filter((pi) => pi.role === "addin")
-        .map((pi) => ({
-          ingredient_id: pi.ingredient_id,
-          item_name: pi.item_name,
-          volume: pi.volume,
-          position: pi.position,
-        }));
-
-      const foldins = productIngredients
-        .filter((pi) => pi.role === "foldin")
-        .map((pi) => ({
-          ingredient_id: pi.ingredient_id,
-          item_name: pi.item_name,
-          volume: pi.volume,
-          position: pi.position,
-        }));
+      const bases = productIngredients.filter((pi) => pi.role === "base").map(mapPi);
+      const addins = productIngredients.filter((pi) => pi.role === "addin").map(mapPi);
+      const foldins = productIngredients.filter((pi) => pi.role === "foldin").map(mapPi);
 
       return {
         ...product,
@@ -143,14 +130,18 @@ export async function POST(request: Request) {
     );
     const product = productResult.rows[0];
 
+    const validBases = (bases || []).filter((b: { ingredient_id: number }) => b.ingredient_id);
+    const validAddins = (addins || []).filter((a: { ingredient_id: number }) => a.ingredient_id);
+    const validFoldins = (foldins || []).filter((f: { ingredient_id: number }) => f.ingredient_id);
+
     const ingredientRows = [
-      ...(bases || []).map((b: { ingredient_id: number; volume?: string }, i: number) => ({
+      ...validBases.map((b: { ingredient_id: number; volume?: string }, i: number) => ({
         ...b, role: "base", position: i + 1,
       })),
-      ...(addins || []).map((a: { ingredient_id: number; volume?: string }, i: number) => ({
+      ...validAddins.map((a: { ingredient_id: number; volume?: string }, i: number) => ({
         ...a, role: "addin", position: i + 1,
       })),
-      ...(foldins || []).map((f: { ingredient_id: number; volume?: string }, i: number) => ({
+      ...validFoldins.map((f: { ingredient_id: number; volume?: string }, i: number) => ({
         ...f, role: "foldin", position: i + 1,
       })),
     ];

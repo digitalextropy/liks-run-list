@@ -29,9 +29,15 @@ export default function Nav() {
             </Link>
             <Link
               href="/admin/recipes"
-              className={linkClass(pathname.startsWith("/admin/recipes"))}
+              className={linkClass(pathname === "/admin/recipes")}
             >
               Recipes
+            </Link>
+            <Link
+              href="/admin/recipes2"
+              className={linkClass(pathname.startsWith("/admin/recipes2"))}
+            >
+              Recipes2
             </Link>
           </div>
           <div className="flex items-center gap-1">

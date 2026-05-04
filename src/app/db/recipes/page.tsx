@@ -8,12 +8,20 @@ import { useEffect, useState, useRef, useCallback } from "react";
 interface IngredientOption {
   id: number;
   item_name: string;
+  item_unit: string | null;
 }
 
 interface CompositionRow {
   ingredient_id: number;
   item_name: string;
-  volume: string;
+  qty: string;
+  unit: string;
+}
+
+interface ApiCompositionRow {
+  ingredient_id: number;
+  item_name: string;
+  volume: string | null;
 }
 
 interface Recipe {
@@ -25,14 +33,20 @@ interface Recipe {
   label_text: string | null;
   label_type: string | null;
   active: boolean;
-  bases: CompositionRow[];
-  addins: CompositionRow[];
-  foldins: CompositionRow[];
+  bases: ApiCompositionRow[];
+  addins: ApiCompositionRow[];
+  foldins: ApiCompositionRow[];
   derived_ingredients: string;
   derived_allergens: string[];
 }
 
 const LABEL_TYPES = ["One Line", "Two Lines", "One Smaller Line"];
+
+const MEASURE_OPTIONS = [
+  "bag", "bags", "bottle", "box", "can", "case", "cup", "cups",
+  "fl oz", "gal", "gallon", "gals", "jar", "lb", "oz", "pack",
+  "pail", "qt", "qts", "quart", "tbsp",
+];
 
 // ─────────────────────────────────────────────────────────────────────────
 // Page
@@ -79,9 +93,10 @@ export default function RecipesPage() {
       setIngredients(
         (data.ingredients || [])
           .filter((i: { active: boolean }) => i.active)
-          .map((i: { id: number; item_name: string }) => ({
+          .map((i: { id: number; item_name: string; item_unit: string | null }) => ({
             id: i.id,
             item_name: i.item_name,
+            item_unit: i.item_unit,
           }))
       );
     } catch {
@@ -94,6 +109,13 @@ export default function RecipesPage() {
     fetchIngredients();
   }, [fetchRecipes, fetchIngredients]);
 
+  function parseVolume(v: string | null | undefined): { qty: string; unit: string } {
+    if (!v) return { qty: "", unit: "" };
+    const match = v.match(/^([\d./\s]+)\s*(.*)$/);
+    if (match) return { qty: match[1].trim(), unit: match[2].trim() };
+    return { qty: v, unit: "" };
+  }
+
   function loadRecipeIntoForm(recipe: Recipe) {
     setSelected(recipe);
     setIsNew(false);
@@ -104,9 +126,9 @@ export default function RecipesPage() {
     setFormLabelText(recipe.label_text || "");
     setFormLabelType(recipe.label_type || "");
     setFormActive(recipe.active);
-    setFormBases(recipe.bases.map((b) => ({ ...b, volume: b.volume || "" })));
-    setFormAddins(recipe.addins.map((a) => ({ ...a, volume: a.volume || "" })));
-    setFormFoldins(recipe.foldins.map((f) => ({ ...f, volume: f.volume || "" })));
+    setFormBases(recipe.bases.map((b) => ({ ingredient_id: b.ingredient_id, item_name: b.item_name, ...parseVolume(b.volume) })));
+    setFormAddins(recipe.addins.map((a) => ({ ingredient_id: a.ingredient_id, item_name: a.item_name, ...parseVolume(a.volume) })));
+    setFormFoldins(recipe.foldins.map((f) => ({ ingredient_id: f.ingredient_id, item_name: f.item_name, ...parseVolume(f.volume) })));
     setMessage("");
   }
 
@@ -142,9 +164,9 @@ export default function RecipesPage() {
       label_text: formLabelText || null,
       label_type: formLabelType || null,
       active: formActive,
-      bases: formBases.filter((b) => b.ingredient_id).map((b) => ({ ingredient_id: b.ingredient_id, volume: b.volume || null })),
-      addins: formAddins.filter((a) => a.ingredient_id).map((a) => ({ ingredient_id: a.ingredient_id, volume: a.volume || null })),
-      foldins: formFoldins.filter((f) => f.ingredient_id).map((f) => ({ ingredient_id: f.ingredient_id, volume: f.volume || null })),
+      bases: formBases.filter((b) => b.ingredient_id).map((b) => ({ ingredient_id: b.ingredient_id, volume: [b.qty, b.unit].filter(Boolean).join(" ") || null })),
+      addins: formAddins.filter((a) => a.ingredient_id).map((a) => ({ ingredient_id: a.ingredient_id, volume: [a.qty, a.unit].filter(Boolean).join(" ") || null })),
+      foldins: formFoldins.filter((f) => f.ingredient_id).map((f) => ({ ingredient_id: f.ingredient_id, volume: [f.qty, f.unit].filter(Boolean).join(" ") || null })),
     };
 
     try {
@@ -165,10 +187,12 @@ export default function RecipesPage() {
 
       if (res.ok) {
         setMessage(isNew ? "Recipe created" : "Recipe saved");
+        setFormBases(formBases.filter((b) => b.ingredient_id));
+        setFormAddins(formAddins.filter((a) => a.ingredient_id));
+        setFormFoldins(formFoldins.filter((f) => f.ingredient_id));
         await fetchRecipes();
         if (isNew) {
           const data = await res.json();
-          // Select the newly created recipe
           if (data.recipe) {
             setSelected(data.recipe);
             setIsNew(false);
@@ -204,6 +228,16 @@ export default function RecipesPage() {
     }
     setSaving(false);
   }
+
+  const unitOptions = Array.from(
+    new Set([
+      ...MEASURE_OPTIONS,
+      ...(ingredients.map((i) => i.item_unit).filter(Boolean) as string[]),
+      ...formBases.map((r) => r.unit).filter(Boolean),
+      ...formAddins.map((r) => r.unit).filter(Boolean),
+      ...formFoldins.map((r) => r.unit).filter(Boolean),
+    ])
+  ).sort((a, b) => a.localeCompare(b));
 
   // Derived fields from current form state
   const allFormIngredients = [...formBases, ...formAddins, ...formFoldins].filter((r) => r.ingredient_id);
@@ -373,16 +407,16 @@ export default function RecipesPage() {
                 <textarea
                   value={formNotes}
                   onChange={(e) => setFormNotes(e.target.value)}
-                  rows={2}
+                  rows={4}
                   className="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 />
               </div>
-              <div>
+              <div className="col-span-2">
                 <label className="block text-xs font-medium text-gray-700 mb-1">Label Text</label>
-                <input
-                  type="text"
+                <textarea
                   value={formLabelText}
                   onChange={(e) => setFormLabelText(e.target.value)}
+                  rows={2}
                   className="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 />
               </div>
@@ -424,6 +458,7 @@ export default function RecipesPage() {
                 rows={formBases}
                 onChange={setFormBases}
                 ingredients={ingredients}
+                unitOptions={unitOptions}
                 color="indigo"
               />
               <CompositionSection
@@ -431,6 +466,7 @@ export default function RecipesPage() {
                 rows={formAddins}
                 onChange={setFormAddins}
                 ingredients={ingredients}
+                unitOptions={unitOptions}
                 color="violet"
               />
               <CompositionSection
@@ -438,6 +474,7 @@ export default function RecipesPage() {
                 rows={formFoldins}
                 onChange={setFormFoldins}
                 ingredients={ingredients}
+                unitOptions={unitOptions}
                 color="fuchsia"
               />
             </div>
@@ -484,12 +521,14 @@ function CompositionSection({
   rows,
   onChange,
   ingredients,
+  unitOptions,
   color,
 }: {
   title: string;
   rows: CompositionRow[];
   onChange: (rows: CompositionRow[]) => void;
   ingredients: IngredientOption[];
+  unitOptions: string[];
   color: "indigo" | "violet" | "fuchsia";
 }) {
   const colorClasses = {
@@ -499,7 +538,7 @@ function CompositionSection({
   };
 
   function addRow() {
-    onChange([...rows, { ingredient_id: 0, item_name: "", volume: "" }]);
+    onChange([...rows, { ingredient_id: 0, item_name: "", qty: "", unit: "" }]);
   }
 
   function removeRow(index: number) {
@@ -533,15 +572,27 @@ function CompositionSection({
             <IngredientPicker
               ingredients={ingredients}
               value={row.ingredient_id}
+              displayName={row.item_name}
               onChange={(id, name) => updateRow(i, { ingredient_id: id, item_name: name })}
             />
             <input
               type="text"
-              value={row.volume}
-              onChange={(e) => updateRow(i, { volume: e.target.value })}
-              placeholder="Volume"
-              className="w-28 px-2 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              value={row.qty}
+              onChange={(e) => updateRow(i, { qty: e.target.value })}
+              maxLength={6}
+              placeholder="Qty"
+              className="w-16 px-2 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
             />
+            <select
+              value={row.unit}
+              onChange={(e) => updateRow(i, { unit: e.target.value })}
+              className="w-24 px-2 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            >
+              <option value="">Unit</option>
+              {unitOptions.map((u) => (
+                <option key={u} value={u}>{u}</option>
+              ))}
+            </select>
             <button
               onClick={() => removeRow(i)}
               className="text-gray-400 hover:text-red-600 text-lg leading-none px-1"
@@ -561,10 +612,12 @@ function CompositionSection({
 function IngredientPicker({
   ingredients,
   value,
+  displayName,
   onChange,
 }: {
   ingredients: IngredientOption[];
   value: number;
+  displayName: string;
   onChange: (id: number, name: string) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -598,7 +651,7 @@ function IngredientPicker({
         }}
         className="w-full text-left px-2 py-1 border border-gray-300 rounded text-sm bg-white hover:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 truncate"
       >
-        {selected ? selected.item_name : <span className="text-gray-400">Select ingredient...</span>}
+        {selected ? selected.item_name : (value && displayName ? <span className="text-amber-700">{displayName} (inactive)</span> : <span className="text-gray-400">Select ingredient...</span>)}
       </button>
       {open && (
         <div className="absolute z-50 top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-60 overflow-hidden flex flex-col">

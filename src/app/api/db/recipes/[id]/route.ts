@@ -101,14 +101,18 @@ export async function PUT(
 
     await query("DELETE FROM product_ingredients WHERE product_id = $1", [id]);
 
+    const validBases = (bases || []).filter((b: { ingredient_id: number }) => b.ingredient_id);
+    const validAddins = (addins || []).filter((a: { ingredient_id: number }) => a.ingredient_id);
+    const validFoldins = (foldins || []).filter((f: { ingredient_id: number }) => f.ingredient_id);
+
     const ingredientRows = [
-      ...(bases || []).map((b: { ingredient_id: number; volume?: string }, i: number) => ({
+      ...validBases.map((b: { ingredient_id: number; volume?: string }, i: number) => ({
         ...b, role: "base", position: i + 1,
       })),
-      ...(addins || []).map((a: { ingredient_id: number; volume?: string }, i: number) => ({
+      ...validAddins.map((a: { ingredient_id: number; volume?: string }, i: number) => ({
         ...a, role: "addin", position: i + 1,
       })),
-      ...(foldins || []).map((f: { ingredient_id: number; volume?: string }, i: number) => ({
+      ...validFoldins.map((f: { ingredient_id: number; volume?: string }, i: number) => ({
         ...f, role: "foldin", position: i + 1,
       })),
     ];
