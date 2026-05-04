@@ -10,7 +10,15 @@ export async function GET(
     if (result.rows.length === 0) {
       return Response.json({ error: "Ingredient not found" }, { status: 404 });
     }
-    return Response.json({ ingredient: result.rows[0] });
+    const recipes = await query(
+      `SELECT DISTINCT p.id, p.name, p.active
+       FROM product_ingredients pi
+       JOIN products p ON p.id = pi.product_id
+       WHERE pi.ingredient_id = $1
+       ORDER BY p.name`,
+      [id]
+    );
+    return Response.json({ ingredient: result.rows[0], recipes: recipes.rows });
   } catch (error) {
     return Response.json(
       { error: "Failed to fetch ingredient", details: String(error) },

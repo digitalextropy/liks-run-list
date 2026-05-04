@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 
 interface Ingredient {
   id: number;
@@ -69,6 +69,7 @@ export default function IngredientsPage() {
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [usedByRecipes, setUsedByRecipes] = useState<{ id: number; name: string; active: boolean }[]>([]);
 
   const fetchIngredients = useCallback(async () => {
     try {
@@ -86,6 +87,18 @@ export default function IngredientsPage() {
     fetchIngredients();
   }, [fetchIngredients]);
 
+  const measurementOptions = useMemo(() => {
+    const vals = new Set(ingredients.map((i) => i.item_measurement).filter(Boolean) as string[]);
+    return [...vals].sort((a, b) => a.localeCompare(b));
+  }, [ingredients]);
+
+  const unitOptions = useMemo(() => {
+    const vals = new Set(ingredients.map((i) => i.item_unit).filter(Boolean) as string[]);
+    return [...vals].sort((a, b) => a.localeCompare(b));
+  }, [ingredients]);
+
+  const selectedIngredient = selectedId ? ingredients.find((i) => i.id === selectedId) : null;
+
   const filteredIngredients = ingredients.filter((ing) => {
     const matchesSearch =
       ing.item_name.toLowerCase().includes(search.toLowerCase()) ||
@@ -94,12 +107,23 @@ export default function IngredientsPage() {
     return matchesSearch && matchesFilter;
   });
 
+  async function fetchUsedByRecipes(ingredientId: number) {
+    try {
+      const res = await fetch(`/api/db/ingredients/${ingredientId}`);
+      const data = await res.json();
+      setUsedByRecipes(data.recipes || []);
+    } catch {
+      setUsedByRecipes([]);
+    }
+  }
+
   function selectIngredient(ing: Ingredient) {
     setSelectedId(ing.id);
     setIsNew(false);
     setConfirmDelete(false);
     setError(null);
     setSuccessMsg(null);
+    fetchUsedByRecipes(ing.id);
     setForm({
       item_name: ing.item_name,
       generic_name: ing.generic_name || "",
@@ -127,6 +151,7 @@ export default function IngredientsPage() {
     setConfirmDelete(false);
     setError(null);
     setSuccessMsg(null);
+    setUsedByRecipes([]);
     setForm({ ...EMPTY_INGREDIENT });
   }
 
@@ -205,6 +230,9 @@ export default function IngredientsPage() {
   }
 
   function updateForm(field: string, value: string | boolean | number | null) {
+    if (field === "generic_name" && typeof value === "string") {
+      value = value.toUpperCase();
+    }
     setForm((prev) => ({ ...prev, [field]: value }));
   }
 
@@ -284,6 +312,7 @@ export default function IngredientsPage() {
             Select an ingredient or click &quot;+ New&quot; to get started
           </div>
         ) : (
+          <>
           <div className="border rounded-lg p-5 space-y-4 bg-white shadow-sm">
             <h2 className="text-lg font-medium text-gray-800">
               {isNew ? "New Ingredient" : "Edit Ingredient"}
@@ -321,7 +350,7 @@ export default function IngredientsPage() {
                   type="text"
                   value={form.generic_name || ""}
                   onChange={(e) => updateForm("generic_name", e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm uppercase focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 />
               </div>
 
@@ -342,24 +371,32 @@ export default function IngredientsPage() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Measurement
                 </label>
-                <input
-                  type="text"
+                <select
                   value={form.item_measurement || ""}
                   onChange={(e) => updateForm("item_measurement", e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                />
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
+                >
+                  <option value="">—</option>
+                  {measurementOptions.map((m) => (
+                    <option key={m} value={m}>{m}</option>
+                  ))}
+                </select>
               </div>
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Unit
                 </label>
-                <input
-                  type="text"
+                <select
                   value={form.item_unit || ""}
                   onChange={(e) => updateForm("item_unit", e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                />
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
+                >
+                  <option value="">—</option>
+                  {unitOptions.map((u) => (
+                    <option key={u} value={u}>{u}</option>
+                  ))}
+                </select>
               </div>
 
               <div>
@@ -377,19 +414,6 @@ export default function IngredientsPage() {
                   }
                   className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 />
-              </div>
-
-              <div className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  id="active-check"
-                  checked={form.active}
-                  onChange={(e) => updateForm("active", e.target.checked)}
-                  className="rounded text-indigo-600 focus:ring-indigo-500"
-                />
-                <label htmlFor="active-check" className="text-sm font-medium text-gray-700">
-                  Active
-                </label>
               </div>
 
               <div className="md:col-span-2">
@@ -423,40 +447,79 @@ export default function IngredientsPage() {
               </div>
             </div>
 
-            {/* Actions */}
+            {/* Active + Actions */}
             <div className="flex items-center gap-3 pt-2 border-t">
-              <button
-                onClick={handleSave}
-                disabled={saving}
-                className="px-4 py-2 bg-indigo-600 text-white text-sm rounded-md hover:bg-indigo-700 disabled:opacity-50 transition-colors"
-              >
-                {saving ? "Saving..." : isNew ? "Create" : "Save"}
-              </button>
+              <label className="flex items-center gap-2 text-sm font-medium text-gray-700">
+                <input
+                  type="checkbox"
+                  checked={form.active}
+                  onChange={(e) => updateForm("active", e.target.checked)}
+                  className="rounded text-indigo-600 focus:ring-indigo-500"
+                />
+                Active
+              </label>
 
-              {!isNew && selectedId && (
+              <div className="ml-auto flex items-center gap-3">
                 <button
-                  onClick={handleDelete}
+                  onClick={handleSave}
                   disabled={saving}
-                  className={`px-4 py-2 text-sm rounded-md transition-colors ${
-                    confirmDelete
-                      ? "bg-red-600 text-white hover:bg-red-700"
-                      : "bg-white border border-red-300 text-red-600 hover:bg-red-50"
-                  } disabled:opacity-50`}
+                  className="px-4 py-2 bg-indigo-600 text-white text-sm rounded-md hover:bg-indigo-700 disabled:opacity-50 transition-colors"
                 >
-                  {confirmDelete ? "Confirm Delete" : "Delete"}
+                  {saving ? "Saving..." : isNew ? "Create" : "Save"}
                 </button>
-              )}
 
-              {confirmDelete && (
-                <button
-                  onClick={() => setConfirmDelete(false)}
-                  className="px-3 py-2 text-sm text-gray-600 hover:text-gray-800"
-                >
-                  Cancel
-                </button>
-              )}
+                {!isNew && selectedId && selectedIngredient?.active && (
+                  <button
+                    onClick={handleDelete}
+                    disabled={saving}
+                    className={`px-4 py-2 text-sm rounded-md transition-colors ${
+                      confirmDelete
+                        ? "bg-red-600 text-white hover:bg-red-700"
+                        : "bg-white border border-red-300 text-red-600 hover:bg-red-50"
+                    } disabled:opacity-50`}
+                  >
+                    {confirmDelete ? "Confirm Delete" : "Delete"}
+                  </button>
+                )}
+
+                {confirmDelete && (
+                  <button
+                    onClick={() => setConfirmDelete(false)}
+                    className="px-3 py-2 text-sm text-gray-600 hover:text-gray-800"
+                  >
+                    Cancel
+                  </button>
+                )}
+              </div>
             </div>
           </div>
+
+            {/* Recipes that use this ingredient */}
+            {!isNew && usedByRecipes.length > 0 && (
+              <div className="border rounded-lg p-5 bg-white shadow-sm mt-4">
+                <h3 className="text-sm font-medium text-gray-700 mb-2">
+                  Recipes that use {form.item_name}
+                </h3>
+                <ul className="space-y-1">
+                  {usedByRecipes.map((r) => (
+                    <li key={r.id} className="text-sm">
+                      <a
+                        href={`/db/recipes?id=${r.id}`}
+                        className={`hover:underline ${r.active ? "text-indigo-600" : "text-gray-400 line-through"}`}
+                      >
+                        {r.name}
+                      </a>
+                      {!r.active && (
+                        <span className="ml-2 text-xs bg-gray-200 text-gray-500 px-1.5 py-0.5 rounded">
+                          inactive
+                        </span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>
