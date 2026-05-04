@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useState, useRef, useCallback, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
 
 // ─────────────────────────────────────────────────────────────────────────
 // Types
@@ -47,6 +48,16 @@ const LABEL_TYPES = ["One Line", "Two Lines", "One Smaller Line"];
 // Page
 
 export default function RecipesPage() {
+  return (
+    <Suspense fallback={<div className="flex items-center justify-center h-64"><p className="text-gray-500">Loading...</p></div>}>
+      <RecipesPageInner />
+    </Suspense>
+  );
+}
+
+function RecipesPageInner() {
+  const searchParams = useSearchParams();
+  const deepLinked = useRef(false);
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [ingredients, setIngredients] = useState<IngredientOption[]>([]);
   const [selected, setSelected] = useState<Recipe | null>(null);
@@ -107,6 +118,17 @@ export default function RecipesPage() {
     fetchRecipes();
     fetchIngredients();
   }, [fetchRecipes, fetchIngredients]);
+
+  useEffect(() => {
+    if (deepLinked.current || recipes.length === 0 || ingredients.length === 0) return;
+    const idParam = searchParams.get("id");
+    if (idParam) {
+      const recipe = recipes.find((r) => r.id === Number(idParam));
+      if (recipe) loadRecipeIntoForm(recipe);
+      deepLinked.current = true;
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recipes, ingredients, searchParams]);
 
   function parseVolume(v: string | null | undefined, ingredientId: number): { qty: string; unit: string } {
     let qty = "";

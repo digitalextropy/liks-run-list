@@ -1,4 +1,4 @@
-export default function Recipes2Layout({ children }: { children: React.ReactNode }) {
+export default function RecipesLayout({ children }: { children: React.ReactNode }) {
   return (
     <>
       <link rel="preconnect" href="https://fonts.googleapis.com" />

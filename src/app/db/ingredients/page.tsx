@@ -506,7 +506,7 @@ export default function IngredientsPage() {
                   {usedByRecipes.map((r) => (
                     <li key={r.id} className="text-sm">
                       <a
-                        href={`/admin/recipes2?id=${r.id}`}
+                        href={`/admin/recipes?id=${r.id}`}
                         className={`hover:underline ${r.active ? "text-indigo-600" : "text-gray-400 line-through"}`}
                       >
                         {r.name}
