@@ -7,6 +7,7 @@ interface IngredientRow {
   ingredient_id: number;
   item_name: string;
   item_cost: number | null;
+  item_unit_qty: number | null;
   volume: string | null;
 }
 
@@ -196,12 +197,19 @@ function formatCost(cost: number | string | null): string {
   return `$${n.toFixed(2)}`;
 }
 
+function unitCost(ing: IngredientRow): number {
+  const cost = Number(ing.item_cost);
+  if (!cost || isNaN(cost)) return 0;
+  const qty = Number(ing.item_unit_qty);
+  return qty > 1 ? cost / qty : cost;
+}
+
 function RecipeCard({ recipe, viewMode }: { recipe: Recipe; viewMode: ViewMode }) {
   const showCosts = viewMode === "pricing";
   const showRecipe = viewMode !== "customer";
 
   const allIngredients = [...(recipe.bases || []), ...(recipe.addins || []), ...(recipe.foldins || [])];
-  const totalCost = allIngredients.reduce((sum, ing) => sum + (Number(ing.item_cost) || 0), 0);
+  const totalCost = allIngredients.reduce((sum, ing) => sum + unitCost(ing), 0);
 
   return (
     <article
@@ -347,7 +355,7 @@ function IngredientSection({
             <span className="flex-1 text-[1rem] print:text-[10.5pt]">{item.item_name}</span>
             {showCosts && item.item_cost != null && (
               <span className="w-14 text-right text-[0.88rem] text-gray-500 font-medium shrink-0 print:text-[9pt]">
-                {formatCost(item.item_cost)}
+                {formatCost(unitCost(item))}
               </span>
             )}
           </div>

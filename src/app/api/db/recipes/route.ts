@@ -8,6 +8,7 @@ interface IngredientRow {
   volume: string | null;
   item_name: string;
   item_cost: number | null;
+  item_unit_qty: number | null;
   ingredient_text: string | null;
   allergen_alcohol: boolean;
   allergen_corn_syrup: boolean;
@@ -62,6 +63,7 @@ export async function GET() {
         pi.volume,
         i.item_name,
         i.item_cost,
+        i.item_unit_qty,
         i.ingredient_text,
         i.allergen_alcohol,
         i.allergen_corn_syrup,
@@ -86,6 +88,7 @@ export async function GET() {
         ingredient_id: pi.ingredient_id,
         item_name: pi.item_name,
         item_cost: pi.item_cost,
+        item_unit_qty: pi.item_unit_qty,
         volume: pi.volume,
         position: pi.position,
       });
