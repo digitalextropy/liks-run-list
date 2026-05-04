@@ -109,11 +109,23 @@ export default function RecipesPage() {
     fetchIngredients();
   }, [fetchRecipes, fetchIngredients]);
 
-  function parseVolume(v: string | null | undefined): { qty: string; unit: string } {
-    if (!v) return { qty: "", unit: "" };
-    const match = v.match(/^([\d./\s]+)\s*(.*)$/);
-    if (match) return { qty: match[1].trim(), unit: match[2].trim() };
-    return { qty: v, unit: "" };
+  function parseVolume(v: string | null | undefined, ingredientId: number): { qty: string; unit: string } {
+    let qty = "";
+    let unit = "";
+    if (v) {
+      const match = v.match(/^([\d./\s]+)\s*(.*)$/);
+      if (match) {
+        qty = match[1].trim();
+        unit = match[2].trim();
+      } else {
+        qty = v;
+      }
+    }
+    if (!unit && ingredientId) {
+      const ing = ingredients.find((i) => i.id === ingredientId);
+      if (ing?.item_unit) unit = ing.item_unit;
+    }
+    return { qty, unit };
   }
 
   function loadRecipeIntoForm(recipe: Recipe) {
@@ -126,9 +138,9 @@ export default function RecipesPage() {
     setFormLabelText(recipe.label_text || "");
     setFormLabelType(recipe.label_type || "");
     setFormActive(recipe.active);
-    setFormBases(recipe.bases.map((b) => ({ ingredient_id: b.ingredient_id, item_name: b.item_name, ...parseVolume(b.volume) })));
-    setFormAddins(recipe.addins.map((a) => ({ ingredient_id: a.ingredient_id, item_name: a.item_name, ...parseVolume(a.volume) })));
-    setFormFoldins(recipe.foldins.map((f) => ({ ingredient_id: f.ingredient_id, item_name: f.item_name, ...parseVolume(f.volume) })));
+    setFormBases(recipe.bases.map((b) => ({ ingredient_id: b.ingredient_id, item_name: b.item_name, ...parseVolume(b.volume, b.ingredient_id) })));
+    setFormAddins(recipe.addins.map((a) => ({ ingredient_id: a.ingredient_id, item_name: a.item_name, ...parseVolume(a.volume, a.ingredient_id) })));
+    setFormFoldins(recipe.foldins.map((f) => ({ ingredient_id: f.ingredient_id, item_name: f.item_name, ...parseVolume(f.volume, f.ingredient_id) })));
     setMessage("");
   }
 
@@ -151,6 +163,12 @@ export default function RecipesPage() {
   async function handleSave() {
     if (!formName.trim()) {
       setMessage("Name is required");
+      return;
+    }
+    const allRows = [...formBases, ...formAddins, ...formFoldins].filter((r) => r.ingredient_id);
+    const incomplete = allRows.find((r) => !r.qty.trim() || !r.unit);
+    if (incomplete) {
+      setMessage("Error: All ingredients must have both a qty and a unit selected");
       return;
     }
     setSaving(true);
@@ -435,16 +453,6 @@ export default function RecipesPage() {
                   ))}
                 </select>
               </div>
-              <div>
-                <label className="flex items-center gap-2 text-sm text-gray-700">
-                  <input
-                    type="checkbox"
-                    checked={formActive}
-                    onChange={(e) => setFormActive(e.target.checked)}
-                  />
-                  Active
-                </label>
-              </div>
             </div>
 
             {/* Composition editor */}
@@ -505,6 +513,18 @@ export default function RecipesPage() {
                   )}
                 </div>
               </div>
+            </div>
+
+            {/* Active checkbox at bottom */}
+            <div className="pt-2 border-t border-gray-200">
+              <label className="flex items-center gap-2 text-sm text-gray-700">
+                <input
+                  type="checkbox"
+                  checked={formActive}
+                  onChange={(e) => setFormActive(e.target.checked)}
+                />
+                Active
+              </label>
             </div>
           </div>
         )}
@@ -588,7 +608,7 @@ function CompositionSection({
               onChange={(e) => updateRow(i, { unit: e.target.value })}
               className="w-24 px-2 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
             >
-              <option value="">Unit</option>
+              <option value=""></option>
               {unitOptions.map((u) => (
                 <option key={u} value={u}>{u}</option>
               ))}

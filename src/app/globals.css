@@ -24,3 +24,10 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+@media print {
+  nav, .print\\:hidden { display: none !important; }
+  body { background: white !important; }
+  @page { size: 8.5in 11in portrait; margin: 0.3in 0.4in; }
+  .break-after-page { page-break-after: always; }
+}
