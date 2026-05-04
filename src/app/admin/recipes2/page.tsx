@@ -211,7 +211,7 @@ function RecipeCard({ recipe, viewMode }: { recipe: Recipe; viewMode: ViewMode }
       {/* Header */}
       <div className="flex items-center gap-4 px-6 py-4 border-b-2 border-[#1B2A4A] print:border-b-[1.5pt] print:px-5 print:py-3">
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src="/105901_liks_logo_BJ_DK_01.png" alt="Liks" className="w-[72px] h-[72px] shrink-0 object-contain print:w-[68px] print:h-[68px]" />
+        <img src="/liks-logo.png" alt="Liks" className="w-[72px] h-[72px] shrink-0 object-contain print:w-[68px] print:h-[68px]" />
         <div className="flex-1 min-w-0">
           <div
             className="text-[1.8rem] font-bold text-[#1B2A4A] leading-tight print:text-[20pt]"
