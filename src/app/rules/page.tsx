@@ -11,21 +11,14 @@ import type {
   RecipeNote,
   DayPhase,
   AllergenTransition,
-  FamilyTransitionDefault,
-  FamilyTransitionScenario,
   CleanDecisionRow,
   CleanDecisionConditionKind,
   CleanLevel,
-  FortyFourQtRules,
   RecipeOverrides,
-  OptimizationFlagKey,
 } from "@/lib/rules-schema";
 import {
-  OPTIMIZATION_FLAG_KEYS,
-  OPTIMIZATION_FLAG_LABELS,
   DEFAULT_ALLERGEN_ORDER,
   DEFAULT_BASE_BOLDNESS_ORDER,
-  DEFAULT_FORTY_FOUR_QT_ELIGIBILITY,
 } from "@/lib/rules-schema";
 
 type EditingKey = string | null;
@@ -192,11 +185,24 @@ export default function RulesPage() {
           update("forty_four_qt_callouts", [...rules.forty_four_qt_callouts, { type: "info", text: "New callout" }])
         }
       >
-        <SubsectionHeader title="Eligibility" hint="Recipes excluded from the 44 QT machine by category." />
-        <FortyFourQtEligibility
-          rules={rules.forty_four_qt_eligibility ?? DEFAULT_FORTY_FOUR_QT_ELIGIBILITY}
-          onChange={(next) => update("forty_four_qt_eligibility", next)}
-        />
+        <SubsectionHeader title="Eligibility" hint="Hardcoded engine rules — recipes must pass all checks to be assigned to 44 QT." />
+        <div className="border border-gray-200 rounded-lg divide-y divide-gray-100 text-[13px]">
+          {[
+            { label: "No vegan recipes", detail: "Vegan family is always excluded" },
+            { label: "No sorbet / sherbet", detail: "Sorbet family is always excluded" },
+            { label: "No fold-in recipes", detail: "Fold-ins require hand-stirring — volume too large for quality results" },
+            { label: "Tubs must divide evenly", detail: "Recipe tub count must be divisible by the machine's tubs-per-run" },
+            { label: "Volume targeting", detail: "Engine targets ~1/N of total volume per machine (N = number of machines selected)" },
+          ].map((rule, i) => (
+            <div key={i} className="flex items-start gap-2.5 px-3 py-2">
+              <span className="w-1.5 h-1.5 rounded-full bg-red-400 shrink-0 mt-1.5" />
+              <div>
+                <span className="font-medium text-gray-900">{rule.label}</span>
+                <span className="text-gray-500 ml-1.5">— {rule.detail}</span>
+              </div>
+            </div>
+          ))}
+        </div>
 
         <SubsectionHeader title="Notes & nuance" hint="Free-text rule — context for the AI prose layer and human reference." />
         <EditableInline
@@ -239,11 +245,21 @@ export default function RulesPage() {
         description="Toggle strategies the engine uses to minimize cleaning time and improve flow."
         onAdd={() => update("optimization_rules", [...rules.optimization_rules, "New rule"])}
       >
-        <SubsectionHeader title="Active Strategies" hint="Toggle which optimizations the deterministic engine applies." />
-        <OptimizationFlagsList
-          flags={rules.optimization_flags ?? {}}
-          onChange={(next) => update("optimization_flags", next)}
-        />
+        <SubsectionHeader title="Active Strategies" hint="Always-on — hardcoded in the deterministic engine." />
+        <div className="border border-gray-200 rounded-lg divide-y divide-gray-100">
+          {[
+            "Chain identical recipes back-to-back (skip clean between)",
+            "Defer conditional TA to last run of chain",
+            "Run mildest flavor first within each machine",
+            "Minimize total cleaning time (TAs are costlier than rinses)",
+            "Group recipes sharing the same conditional add-in",
+          ].map((label, i) => (
+            <div key={i} className="flex items-center gap-2.5 px-3 py-2">
+              <span className="w-4 h-4 rounded bg-indigo-100 text-indigo-600 flex items-center justify-center text-[10px] font-bold shrink-0">✓</span>
+              <span className="text-sm text-gray-800">{label}</span>
+            </div>
+          ))}
+        </div>
 
         <SubsectionHeader title="Notes & nuance" hint="Free-text rules — context for the AI prose layer and human reference." />
         <RuleList
@@ -254,13 +270,69 @@ export default function RulesPage() {
         />
       </Section>
 
+      {/* FAMILY CLASSIFICATION */}
+      <Section
+        icon="🏷"
+        iconColor="#7c3aed"
+        iconBg="#f5f3ff"
+        title="Family Classification"
+        description="Every recipe is auto-classified into a family based on its base type and add-ins. Evaluated top-to-bottom — first match wins."
+      >
+        <SubsectionHeader title="Detection Rules" hint="Hardcoded in the engine — evaluated in priority order." />
+        <div className="border border-gray-200 rounded-lg overflow-hidden text-[13px]">
+          <div className="grid grid-cols-12 gap-2 px-3 py-2 bg-gray-50 text-[11px] font-semibold uppercase tracking-wider text-gray-500">
+            <span className="col-span-1">#</span>
+            <span className="col-span-2">Family</span>
+            <span className="col-span-9">Detection Rule</span>
+          </div>
+          {[
+            { family: "vegan", rule: "Base type is vegan" },
+            { family: "sorbet", rule: "Base type is sorbet or sherbet" },
+            { family: "cheesecake", rule: "Base type is cheesecake" },
+            { family: "peanut", rule: "Add-in name contains: peanut, pb" },
+            { family: "nut", rule: "Add-in name contains: pecan, almond, walnut, pistachio, coconut, praline — or has tree nut allergen (without peanut)" },
+            { family: "chocolate", rule: "Base type is chocolate" },
+            { family: "coffee", rule: "Recipe or add-in name contains: coffee, sleepless, espresso, mocha, tasters choice" },
+            { family: "fruit_ta", rule: "Always-TA add-in or recipe name contains: strawberry, cherry, pineapple, banana, peach, apple pie, apple cobbler" },
+            { family: "plain", rule: "Default — none of the above matched" },
+          ].map((row, i) => (
+            <div key={i} className="grid grid-cols-12 gap-2 px-3 py-2 border-t border-gray-100 items-start">
+              <span className="col-span-1 text-[11px] text-gray-400 font-mono">{i + 1}.</span>
+              <span className="col-span-2 font-medium text-gray-900">{row.family}</span>
+              <span className="col-span-9 text-gray-600">{row.rule}</span>
+            </div>
+          ))}
+        </div>
+        <p className="text-[12px] text-gray-500 leading-relaxed mt-2">
+          Recipe notes can override classification via <strong className="text-gray-600 font-mono text-[11px]">force_allergen_group</strong>.
+        </p>
+
+        <SubsectionHeader title="Family Transitions" hint="How the cleaning decision table handles family changes." />
+        <div className="border border-gray-200 rounded-lg divide-y divide-gray-100 text-[13px]">
+          {[
+            { scenario: "Same family, same add-ins", clean: "NO_CLEAN", color: "text-green-600" },
+            { scenario: "Same family, different add-in", clean: "WATER_RINSE", color: "text-blue-700" },
+            { scenario: "Adjacent family (one step in allergen order)", clean: "NO_CLEAN", color: "text-green-600" },
+            { scenario: "Major family change (non-adjacent)", clean: "RINSE", color: "text-amber-600" },
+          ].map((row, i) => (
+            <div key={i} className="flex items-center justify-between px-3 py-2">
+              <span className="text-gray-800">{row.scenario}</span>
+              <span className={`font-semibold text-xs font-mono ${row.color}`}>{row.clean}</span>
+            </div>
+          ))}
+        </div>
+        <p className="text-[12px] text-gray-500 leading-relaxed mt-1.5">
+          These are baseline minimums from the cleaning decision table. Allergen transitions and TA triggers can escalate the clean level.
+        </p>
+      </Section>
+
       {/* SEQUENCING */}
       <Section
         icon="🎨"
         iconColor="#1d4ed8"
         iconBg="#eff6ff"
         title="Flavor & Base Sequencing"
-        description="Controls within-machine ordering by flavor boldness and family transitions. Engine uses boldness order and family defaults."
+        description="Controls within-machine ordering by flavor boldness. Engine uses boldness order as a tiebreaker when cleaning costs are equal."
         onAdd={() => update("sequencing_rules", [...rules.sequencing_rules, "New rule"])}
       >
         <SubsectionHeader title="Base Boldness Order" hint="Within a machine, run mild (top) → bold (bottom). Used by the deterministic sequencer." />
@@ -268,17 +340,6 @@ export default function RulesPage() {
           items={rules.base_boldness_order ?? DEFAULT_BASE_BOLDNESS_ORDER}
           onChange={(next) => update("base_boldness_order", next)}
           placeholder="base type (e.g. plain, chocolate)"
-        />
-
-        <SubsectionHeader title="Family Transition Defaults" hint="Minimum clean step when transitioning between flavor families." />
-        <p className="text-[12px] text-gray-500 leading-relaxed -mt-0.5 mb-2">
-          Every recipe is auto-classified into a <strong className="text-gray-600">family</strong> based on its base type and add-ins:
-          {" "}<em>vegan, sorbet, cheesecake, chocolate, coffee, fruit, nut, peanut,</em> or <em>plain</em>.
-          The table below sets the minimum clean required when consecutive runs switch families.
-        </p>
-        <FamilyTransitionTable
-          defaults={rules.family_transition_defaults ?? []}
-          onChange={(next) => update("family_transition_defaults", next)}
         />
 
         <SubsectionHeader title="Notes & nuance" hint="Free-text rules — context for the AI prose layer and human reference." />
@@ -1913,55 +1974,6 @@ function AllergenTransitionRow({
   );
 }
 
-const FAMILY_TRANSITION_SCENARIOS: { key: FamilyTransitionScenario; label: string }[] = [
-  { key: "same_family", label: "Same family" },
-  { key: "adjacent_family", label: "Adjacent family" },
-  { key: "major_family_change", label: "Major family change" },
-  { key: "boldness_reversed", label: "Boldness reversed (bold → mild)" },
-];
-
-function FamilyTransitionTable({
-  defaults,
-  onChange,
-}: {
-  defaults: FamilyTransitionDefault[];
-  onChange: (next: FamilyTransitionDefault[]) => void;
-}) {
-  function setLevel(scenario: FamilyTransitionScenario, level: CleanLevel) {
-    const existing = defaults.find((d) => d.scenario === scenario);
-    if (existing) {
-      onChange(defaults.map((d) => (d.scenario === scenario ? { ...d, min_clean: level } : d)));
-    } else {
-      onChange([...defaults, { scenario, min_clean: level }]);
-    }
-  }
-  function getLevel(scenario: FamilyTransitionScenario): CleanLevel | "" {
-    return defaults.find((d) => d.scenario === scenario)?.min_clean ?? "";
-  }
-
-  return (
-    <div className="border border-gray-200 rounded-lg overflow-hidden">
-      {FAMILY_TRANSITION_SCENARIOS.map((s, i) => (
-        <div
-          key={s.key}
-          className={`grid grid-cols-12 gap-2 px-3 py-2 items-center ${i > 0 ? "border-t border-gray-100" : ""}`}
-        >
-          <div className="col-span-8 text-sm text-gray-800">{s.label}</div>
-          <select
-            value={getLevel(s.key)}
-            onChange={(e) => setLevel(s.key, e.target.value as CleanLevel)}
-            className="col-span-4 px-2 py-1 border rounded text-xs"
-          >
-            <option value="">— not set —</option>
-            {CLEAN_LEVEL_OPTIONS.map((l) => (
-              <option key={l} value={l}>{l}</option>
-            ))}
-          </select>
-        </div>
-      ))}
-    </div>
-  );
-}
 
 const CLEAN_DECISION_CONDITION_LABELS: Record<CleanDecisionConditionKind, string> = {
   has_always_ta_addin: "Recipe has any always-TA add-in",
@@ -2133,106 +2145,7 @@ function CleanDecisionRowEdit({
   );
 }
 
-function OptimizationFlagsList({
-  flags,
-  onChange,
-}: {
-  flags: Record<string, boolean>;
-  onChange: (next: Record<string, boolean>) => void;
-}) {
-  return (
-    <div className="border border-gray-200 rounded-lg divide-y divide-gray-100">
-      {OPTIMIZATION_FLAG_KEYS.map((key) => (
-        <label
-          key={key}
-          className="flex items-center gap-2.5 px-3 py-2 cursor-pointer hover:bg-gray-50"
-        >
-          <input
-            type="checkbox"
-            checked={flags[key] ?? false}
-            onChange={(e) => onChange({ ...flags, [key]: e.target.checked })}
-            className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500"
-          />
-          <span className="text-sm text-gray-800">
-            {OPTIMIZATION_FLAG_LABELS[key as OptimizationFlagKey]}
-          </span>
-        </label>
-      ))}
-    </div>
-  );
-}
 
-function FortyFourQtEligibility({
-  rules,
-  onChange,
-}: {
-  rules: FortyFourQtRules;
-  onChange: (next: FortyFourQtRules) => void;
-}) {
-  return (
-    <div className="border border-gray-200 rounded-lg p-3 space-y-3">
-      <div className="grid grid-cols-3 gap-2">
-        <label className="flex items-center gap-2 text-sm cursor-pointer">
-          <input
-            type="checkbox"
-            checked={rules.allow_vegan}
-            onChange={(e) => onChange({ ...rules, allow_vegan: e.target.checked })}
-            className="w-4 h-4 rounded text-indigo-600"
-          />
-          Allow vegan
-        </label>
-        <label className="flex items-center gap-2 text-sm cursor-pointer">
-          <input
-            type="checkbox"
-            checked={rules.allow_sorbet}
-            onChange={(e) => onChange({ ...rules, allow_sorbet: e.target.checked })}
-            className="w-4 h-4 rounded text-indigo-600"
-          />
-          Allow sorbet/sherbet
-        </label>
-        <label className="flex items-center gap-2 text-sm cursor-pointer">
-          <input
-            type="checkbox"
-            checked={rules.allow_fold_ins}
-            onChange={(e) => onChange({ ...rules, allow_fold_ins: e.target.checked })}
-            className="w-4 h-4 rounded text-indigo-600"
-          />
-          Allow fold-ins
-        </label>
-      </div>
-      <div className="border-t border-gray-100 pt-3 grid grid-cols-2 gap-3">
-        <label className="block text-xs">
-          <span className="text-gray-600 font-medium">Target % of total volume</span>
-          <div className="flex items-center gap-1 mt-1">
-            <input
-              type="number"
-              min={0}
-              max={100}
-              value={rules.target_pct}
-              onChange={(e) => onChange({ ...rules, target_pct: parseInt(e.target.value) || 0 })}
-              className="w-20 px-2 py-1 border rounded text-sm"
-            />
-            <span className="text-sm text-gray-500">%</span>
-          </div>
-        </label>
-        <label className="block text-xs">
-          <span className="text-gray-600 font-medium">Max % of total volume</span>
-          <div className="flex items-center gap-1 mt-1">
-            <input
-              type="number"
-              min={0}
-              max={100}
-              value={rules.max_pct}
-              onChange={(e) => onChange({ ...rules, max_pct: parseInt(e.target.value) || 0 })}
-              className="w-20 px-2 py-1 border rounded text-sm"
-            />
-            <span className="text-sm text-gray-500">%</span>
-          </div>
-        </label>
-      </div>
-    </div>
-  );
-}
 
 // ─────────────────────────────────────────────────────────────────────────
 // Save indicator
