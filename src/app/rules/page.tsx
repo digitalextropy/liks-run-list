@@ -564,6 +564,49 @@ export default function RulesPage() {
         />
       </Section>
 
+      {/* ═══ GROUP: REFERENCE ═══ */}
+      <SectionGroup title="Reference" />
+
+      {/* HOW IT WORKS */}
+      <Section
+        icon="📖"
+        iconColor="#4b5563"
+        iconBg="#f3f4f6"
+        title="How the Run List Is Built"
+        description="The generation pipeline — which steps are deterministic engine vs. AI prose layer."
+      >
+        <ol className="space-y-3 text-[13px] text-gray-700">
+          {[
+            { step: "Parse recipes", owner: "Engine", desc: "Extract base type, add-ins, allergens, and fold-in status from each uploaded recipe." },
+            { step: "Assign machines", owner: "Engine", desc: "Distribute recipes across selected machines — balance tub volume, respect 44 QT eligibility, and honor any force_machine overrides." },
+            { step: "Sequence runs per machine", owner: "Engine", desc: "Order runs by allergen priority (vegan → plain → bold → nuts), then by base boldness within each group. Identical recipes chain back-to-back." },
+            { step: "Decide cleaning between runs", owner: "Engine", desc: "Walk the cleaning decision table top-to-bottom for each pair of consecutive runs. First matching rule sets the clean level. Allergen transitions and recipe overrides can escalate it." },
+            { step: "Apply optimizations", owner: "Engine", desc: "Conditional-TA deferral, fold-in chaining, same-nut skip — toggled by the Active Strategies checkboxes above." },
+            { step: "Group into labeled sections", owner: "AI", desc: "Cluster related runs into logical blocks and label each section (e.g. 'Coffee family chain', 'Nuts — end of day'). Labels appear on the first run of each group." },
+            { step: "Generate prose run list", owner: "AI", desc: "Produce the final human-readable run list with notes, warnings, and timing estimates. References Day Structure, free-text rules, and callouts for context." },
+          ].map((s, i) => (
+            <li key={i} className="flex gap-3">
+              <span className="shrink-0 w-5 h-5 rounded-full bg-gray-200 text-[11px] font-bold text-gray-600 flex items-center justify-center mt-0.5">
+                {i + 1}
+              </span>
+              <div className="flex-1">
+                <div className="flex items-center gap-2">
+                  <span className="font-semibold text-gray-900">{s.step}</span>
+                  <span className={`text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded ${
+                    s.owner === "Engine"
+                      ? "bg-indigo-100 text-indigo-700"
+                      : "bg-amber-100 text-amber-700"
+                  }`}>
+                    {s.owner}
+                  </span>
+                </div>
+                <p className="text-gray-500 text-[12px] leading-relaxed mt-0.5">{s.desc}</p>
+              </div>
+            </li>
+          ))}
+        </ol>
+      </Section>
+
     </div>
   );
 }
