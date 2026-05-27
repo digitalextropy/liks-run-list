@@ -471,8 +471,10 @@ export async function generateRunListDeterministic(
 
     for (let i = 0; i < sequenced.length; i++) {
       const recipe = sequenced[i];
-      const prev = i > 0 ? sequenced[i - 1] : null;
-      const decision = decideCleanAfter(prev, recipe, rules);
+      const next = i < sequenced.length - 1 ? sequenced[i + 1] : null;
+      const decision = next
+        ? decideCleanAfter(recipe, next, rules)
+        : { clean_after: "NO_CLEAN" as CleanLevel, reason: "Last run on machine." };
       const chain = detectChainBadge(sequenced, i);
       const sectionLabel = detectSectionLabel(sequenced, i);
 
