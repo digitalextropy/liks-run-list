@@ -350,16 +350,206 @@ export function sequenceRunsWithCost(
   return { sequence, totalCleanMinutes, cleanBreakdown };
 }
 
-// ─── Existing exports ───
+// ─── Stage 4: generateRunListDeterministic ───
+
+function buildStubReason(run: AssignedRecipe, cleanAfter: CleanLevel): string {
+  const base = run.recipe.base.type;
+  const addIns = run.recipe.addIns;
+  const addInSummary = addIns.length > 0
+    ? addIns.map(a => a.name).join(", ")
+    : "no add-ins";
+  const cleanLabel = cleanAfter === "NO_CLEAN" ? "no clean needed"
+    : cleanAfter === "WATER_RINSE" ? "water rinse"
+    : cleanAfter === "RINSE" ? "rinse"
+    : "take-apart";
+  return `${base} base; ${addInSummary} — ${cleanLabel}`;
+}
+
+function detectChainBadge(sequence: AssignedRecipe[], index: number): { badge: boolean; label?: string } {
+  const curr = sequence[index];
+  const prev = index > 0 ? sequence[index - 1] : null;
+  const next = index < sequence.length - 1 ? sequence[index + 1] : null;
+
+  if (!prev || prev.name !== curr.name) {
+    // Start of a potential chain — count consecutive identical
+    let count = 1;
+    for (let j = index + 1; j < sequence.length && sequence[j].name === curr.name; j++) count++;
+    if (count > 1) return { badge: true, label: `×${count}` };
+  } else if (prev.name === curr.name) {
+    // Continuation of chain
+    return { badge: true };
+  }
+
+  return { badge: false };
+}
+
+function detectSectionLabel(sequence: AssignedRecipe[], index: number): string | undefined {
+  if (index === 0) return familyLabel(sequence[0].family);
+  const prev = sequence[index - 1];
+  const curr = sequence[index];
+  if (prev.family !== curr.family) return familyLabel(curr.family);
+  return undefined;
+}
+
+function familyLabel(family: string): string {
+  const labels: Record<string, string> = {
+    vegan: "Vegan block",
+    sorbet: "Sorbet / Sherbet block",
+    plain: "Plain base — ascending boldness",
+    chocolate: "Chocolate base block",
+    coffee: "Coffee family chain",
+    cheesecake: "Cheesecake family",
+    fruit_ta: "Fruit block (TA required)",
+    peanut: "Peanut — end of day",
+    nut: "Tree nut — end of day",
+  };
+  return labels[family] ?? `${family} block`;
+}
+
+async function generateProseWithHaiku(
+  machineName: string,
+  runs: { flavor: string; clean_after: CleanLevel; base: string; addIns: string }[],
+): Promise<{ reasons: string[]; footerNote: string }> {
+  // Dynamic import to avoid module-load-time crash when ANTHROPIC_API_KEY is unset
+  const { default: Anthropic } = await import("@anthropic-ai/sdk");
+  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+  const runSummary = runs.map((r, i) =>
+    `${i + 1}. ${r.flavor} (${r.base} base, ${r.addIns || "no add-ins"}) → ${r.clean_after}`
+  ).join("\n");
+
+  const response = await client.messages.create({
+    model: "claude-haiku-4-5-20251001",
+    max_tokens: 1500,
+    system: `You write concise production-floor explanations for an ice cream run list. For each run, write 1 short sentence explaining why this cleaning step was chosen (focusing on what's in the machine and what's coming next). Also write a 1-2 sentence footer note summarizing the machine's sequence strategy. Return ONLY JSON: { "reasons": ["..."], "footer_note": "..." }`,
+    messages: [{
+      role: "user",
+      content: `Machine: ${machineName}\nRun order:\n${runSummary}`,
+    }],
+  });
+
+  const text = response.content[0].type === "text" ? response.content[0].text : "";
+  const jsonMatch = text.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) throw new Error("No JSON in Haiku response");
+  const parsed = JSON.parse(jsonMatch[0]) as { reasons: string[]; footer_note: string };
+  return { reasons: parsed.reasons ?? [], footerNote: parsed.footer_note ?? "" };
+}
 
 export async function generateRunListDeterministic(
-  _recipes: RecipeRequest[],
-  _rules: ProductionRules
+  recipes: RecipeRequest[],
+  rules: ProductionRules
 ): Promise<RunListOutput> {
-  throw new Error(
-    "Deterministic engine is not yet implemented. " +
-      "Set USE_DETERMINISTIC_ENGINE=false (or unset) to use the Claude-based flow."
+  const { assignMachines } = await import("./machine-assigner");
+
+  // Phase 1: deterministic machine assignment
+  const assigned = assignMachines(recipes, rules);
+
+  // Group by machine
+  const byMachine = new Map<string, AssignedRecipe[]>();
+  for (const r of assigned) {
+    if (!byMachine.has(r.assignedMachine)) byMachine.set(r.assignedMachine, []);
+    byMachine.get(r.assignedMachine)!.push(r);
+  }
+
+  // Phase 2+3: per-machine sequencing + clean decisions
+  const machineResults = rules.machines.map(machine => {
+    const machineRecipes = byMachine.get(machine.name) ?? [];
+    if (machineRecipes.length === 0) {
+      return {
+        name: machine.name,
+        capacity_gallons: machine.capacity_gallons,
+        tubs_per_run: machine.tubs_per_run,
+        runs: [] as RunListOutput["machines"][number]["runs"],
+        summary: { total_runs: 0, total_tubs: 0, take_aparts: 0, rinses: 0, water_rinses: 0, no_cleans: 0 },
+        footer_note: "",
+        _sequenced: [] as AssignedRecipe[],
+      };
+    }
+
+    const sequenced = sequenceRuns(machineRecipes, rules);
+    const runs: RunListOutput["machines"][number]["runs"] = [];
+
+    for (let i = 0; i < sequenced.length; i++) {
+      const recipe = sequenced[i];
+      const prev = i > 0 ? sequenced[i - 1] : null;
+      const decision = decideCleanAfter(prev, recipe, rules);
+      const chain = detectChainBadge(sequenced, i);
+      const sectionLabel = detectSectionLabel(sequenced, i);
+
+      const addInSummary = recipe.recipe.addIns.length > 0
+        ? recipe.recipe.addIns.map(a => a.name).join(", ")
+        : undefined;
+
+      runs.push({
+        order: i + 1,
+        flavor: recipe.name,
+        tubs: machine.tubs_per_run,
+        clean_after: decision.clean_after,
+        reason: buildStubReason(recipe, decision.clean_after),
+        chain_badge: chain.badge,
+        chain_label: chain.label,
+        flags: [],
+        mix_ins: addInSummary,
+        section_label: sectionLabel,
+      });
+    }
+
+    const summary = {
+      total_runs: runs.length,
+      total_tubs: runs.length * machine.tubs_per_run,
+      take_aparts: runs.filter(r => r.clean_after === "TAKE_APART").length,
+      rinses: runs.filter(r => r.clean_after === "RINSE").length,
+      water_rinses: runs.filter(r => r.clean_after === "WATER_RINSE").length,
+      no_cleans: runs.filter(r => r.clean_after === "NO_CLEAN").length,
+    };
+
+    return {
+      name: machine.name,
+      capacity_gallons: machine.capacity_gallons,
+      tubs_per_run: machine.tubs_per_run,
+      runs,
+      summary,
+      footer_note: "",
+      _sequenced: sequenced,
+    };
+  });
+
+  // Phase 4: AI prose layer (cosmetic — failures produce stub text)
+  await Promise.all(
+    machineResults.map(async (mr) => {
+      if (mr.runs.length === 0) return;
+      try {
+        const proseInput = mr.runs.map(r => ({
+          flavor: r.flavor,
+          clean_after: r.clean_after,
+          base: mr._sequenced.find(s => s.name === r.flavor)?.recipe.base.type ?? "plain",
+          addIns: r.mix_ins ?? "no add-ins",
+        }));
+        const prose = await generateProseWithHaiku(mr.name, proseInput);
+        for (let i = 0; i < mr.runs.length && i < prose.reasons.length; i++) {
+          mr.runs[i].reason = prose.reasons[i];
+        }
+        mr.footer_note = prose.footerNote;
+      } catch (e) {
+        console.log(`[deterministic-engine] Haiku prose failed for ${mr.name}: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    })
   );
+
+  // Build final output (strip internal _sequenced field)
+  const machines = machineResults.map(({ _sequenced: _, ...rest }) => rest);
+
+  const totals = {
+    runs: machines.reduce((s, m) => s + m.summary.total_runs, 0),
+    tubs: machines.reduce((s, m) => s + m.summary.total_tubs, 0),
+    gallons: machines.reduce((s, m) => s + m.summary.total_tubs * (m.capacity_gallons / m.tubs_per_run), 0),
+    take_aparts: machines.reduce((s, m) => s + m.summary.take_aparts, 0),
+    rinses: machines.reduce((s, m) => s + m.summary.rinses, 0),
+    water_rinses: machines.reduce((s, m) => s + m.summary.water_rinses, 0),
+    no_cleans: machines.reduce((s, m) => s + m.summary.no_cleans, 0),
+  };
+
+  return { machines, totals };
 }
 
 export function isDeterministicEngineEnabled(): boolean {
