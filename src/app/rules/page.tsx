@@ -227,8 +227,32 @@ export default function RulesPage() {
         />
       </Section>
 
-      {/* ═══ GROUP: SEQUENCING & CLEANING ═══ */}
-      <SectionGroup title="Sequencing & Cleaning" />
+      {/* ═══ GROUP: SEQUENCING ═══ */}
+      <SectionGroup title="Sequencing" />
+
+      {/* OPTIMIZATION */}
+      <Section
+        icon="⚡"
+        iconColor="#d97706"
+        iconBg="#fffbeb"
+        title="Optimization Rules"
+        description="Toggle strategies the engine uses to minimize cleaning time and improve flow."
+        onAdd={() => update("optimization_rules", [...rules.optimization_rules, "New rule"])}
+      >
+        <SubsectionHeader title="Active Strategies" hint="Toggle which optimizations the deterministic engine applies." />
+        <OptimizationFlagsList
+          flags={rules.optimization_flags ?? {}}
+          onChange={(next) => update("optimization_flags", next)}
+        />
+
+        <SubsectionHeader title="Notes & nuance" hint="Free-text rules — context for the AI prose layer and human reference." />
+        <RuleList
+          items={rules.optimization_rules}
+          ctx={editorCtx}
+          keyPrefix="op"
+          onChange={(next) => update("optimization_rules", next)}
+        />
+      </Section>
 
       {/* SEQUENCING */}
       <Section
@@ -317,6 +341,9 @@ export default function RulesPage() {
           keyPrefix="al-callout"
         />
       </Section>
+
+      {/* ═══ GROUP: CLEANING ═══ */}
+      <SectionGroup title="Cleaning" />
 
       {/* CLEANING TIERS */}
       <Section
@@ -502,30 +529,6 @@ export default function RulesPage() {
           rows={rules.cleaning_decision_table ?? []}
           ctx={editorCtx}
           onChange={(next) => update("cleaning_decision_table", next)}
-        />
-      </Section>
-
-      {/* OPTIMIZATION */}
-      <Section
-        icon="⚡"
-        iconColor="#d97706"
-        iconBg="#fffbeb"
-        title="Optimization Rules"
-        description="Toggle strategies the engine uses to minimize cleaning time and improve flow."
-        onAdd={() => update("optimization_rules", [...rules.optimization_rules, "New rule"])}
-      >
-        <SubsectionHeader title="Active Strategies" hint="Toggle which optimizations the deterministic engine applies." />
-        <OptimizationFlagsList
-          flags={rules.optimization_flags ?? {}}
-          onChange={(next) => update("optimization_flags", next)}
-        />
-
-        <SubsectionHeader title="Notes & nuance" hint="Free-text rules — context for the AI prose layer and human reference." />
-        <RuleList
-          items={rules.optimization_rules}
-          ctx={editorCtx}
-          keyPrefix="op"
-          onChange={(next) => update("optimization_rules", next)}
         />
       </Section>
 
