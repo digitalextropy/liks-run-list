@@ -131,49 +131,9 @@ export default function RulesPage() {
 
   const editorCtx = { editing, setEditing, rules, update };
 
-  const hasAnyStructured = !!(
-    rules.allergen_order ||
-    rules.allergen_transitions ||
-    rules.base_boldness_order ||
-    rules.family_transition_defaults ||
-    rules.cleaning_decision_table ||
-    rules.optimization_flags ||
-    rules.forty_four_qt_eligibility
-  );
-
-  async function seedStructured() {
-    if (
-      hasAnyStructured &&
-      !confirm(
-        "Some structured fields are already set. Reseeding will OVERWRITE them with defaults. Continue?"
-      )
-    ) {
-      return;
-    }
-    try {
-      const res = await fetch("/api/rules/seed-structured", { method: "POST" });
-      if (!res.ok) {
-        const data = await res.json().catch(() => null);
-        alert(`Seed failed: ${data?.error || res.status}`);
-        return;
-      }
-      const defaults = await res.json();
-      setRules({ ...rules, ...defaults });
-    } catch (e) {
-      alert(`Seed failed: ${e instanceof Error ? e.message : String(e)}`);
-    }
-  }
-
   return (
     <div className="max-w-4xl mx-auto px-2 space-y-7 pb-24">
       <div className="flex items-center justify-end gap-3 -mb-3">
-        <button
-          onClick={seedStructured}
-          title="Populate the structured fields the deterministic engine reads, using sensible defaults derived from the prose rules."
-          className="text-xs font-medium px-2.5 py-1 rounded border border-indigo-200 text-indigo-700 bg-indigo-50 hover:bg-indigo-100"
-        >
-          {hasAnyStructured ? "Reseed structured defaults" : "Seed structured defaults"}
-        </button>
         <SaveIndicator state={saveState} />
       </div>
 
