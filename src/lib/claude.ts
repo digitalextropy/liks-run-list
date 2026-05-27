@@ -400,6 +400,109 @@ function enforceRunCounts(
   return result;
 }
 
+type MachineRunListSlice = RunListOutput["machines"][number];
+
+function parseMachineJson(text: string): MachineRunListSlice {
+  const jsonMatch = text.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) throw new Error(`No JSON found. Raw: ${text.slice(0, 300)}`);
+  return JSON.parse(jsonMatch[0]) as MachineRunListSlice;
+}
+
+async function generateMachineRuns(
+  machineName: string,
+  machineRecipes: AssignedRecipe[],
+  rules: ProductionRules,
+  systemPrompt: string
+): Promise<MachineRunListSlice> {
+  const machine = rules.machines.find((m) => m.name === machineName)!;
+  const tubsPerRun = machine.tubs_per_run;
+  const grandTotal = machineRecipes.reduce((s, r) => s + r.tubs, 0);
+
+  const assignmentLines = machineRecipes
+    .map((r) => {
+      const runsNeeded = Math.ceil(r.tubs / tubsPerRun);
+      return `    ${r.name}: ${r.tubs} tubs → ${runsNeeded} run${runsNeeded === 1 ? "" : "s"} [family: ${r.family}]`;
+    })
+    .join("\n");
+
+  const recipeDetails = machineRecipes
+    .map(
+      (r) => `- ${r.name}: ${r.tubs} tubs
+  Base: ${r.recipe.base.type} (${r.recipe.base.ingredients.join(", ")})
+  Add-ins: ${r.recipe.addIns.map((a) => `${a.name} [${a.taTrigger} TA]`).join(", ") || "none"}
+  Fold-ins: ${r.recipe.foldIns.map((f) => f.name).join(", ") || "none"}
+  Allergens: ${r.recipe.allergens.join(", ") || "none"}
+  44QT eligible: ${r.recipe.eligible44qt}`
+    )
+    .join("\n\n");
+
+  const userMessage = `Sequence runs for ONE machine only: ${machineName}.
+
+Machine details: ${machine.tubs_per_run} tub${machine.tubs_per_run === 1 ? "" : "s"} per run, ${machine.capacity_gallons} gallon capacity (do not change tub values in output).
+
+PRE-ASSIGNED RECIPES (sequence optimally and decide clean step between runs):
+${assignmentLines}
+
+Total tubs on this machine: ${grandTotal}
+
+RECIPE DETAILS:
+${recipeDetails}
+
+Return ONLY a JSON object for this single machine (NOT wrapped in {"machines": [...]}):
+{
+  "name": "${machineName}",
+  "capacity_gallons": ${machine.capacity_gallons},
+  "tubs_per_run": ${tubsPerRun},
+  "runs": [
+    {
+      "order": number,
+      "flavor": string,
+      "tubs": number,
+      "clean_after": "NO_CLEAN" | "WATER_RINSE" | "RINSE" | "TAKE_APART",
+      "reason": string,
+      "chain_badge": boolean,
+      "chain_label": string (optional),
+      "flags": string[],
+      "mix_ins": string (optional),
+      "section_label": string (optional — ONLY on the first run of a new logical section)
+    }
+  ],
+  "summary": { "total_runs": number, "total_tubs": number, "take_aparts": number, "rinses": number, "water_rinses": number, "no_cleans": number },
+  "footer_note": string
+}
+
+No markdown, no commentary.`;
+
+  const t0 = Date.now();
+  const response = await client.messages.create({
+    model: "claude-sonnet-4-6",
+    max_tokens: 4000,
+    system: systemPrompt,
+    messages: [{ role: "user", content: userMessage }],
+  });
+  const elapsed = Date.now() - t0;
+  console.log(`[generate] ${machineName}: Claude responded in ${elapsed}ms`);
+
+  const text = response.content[0].type === "text" ? response.content[0].text : "";
+  try {
+    return parseMachineJson(text);
+  } catch (e) {
+    throw new Error(`Claude returned invalid JSON for ${machineName}: ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
+
+function emptyMachineSlice(machineName: string, rules: ProductionRules): MachineRunListSlice {
+  const m = rules.machines.find((x) => x.name === machineName);
+  return {
+    name: machineName,
+    capacity_gallons: m?.capacity_gallons ?? 0,
+    tubs_per_run: m?.tubs_per_run ?? 2,
+    runs: [],
+    summary: { total_runs: 0, total_tubs: 0, take_aparts: 0, rinses: 0, water_rinses: 0, no_cleans: 0 },
+    footer_note: "",
+  };
+}
+
 export async function generateRunList(
   recipes: RecipeRequest[],
   rules: ProductionRules
@@ -409,64 +512,29 @@ export async function generateRunList(
   // Phase 1: deterministic machine assignment — keeps each flavor family on one machine.
   const assigned = assignMachines(recipes, rules);
 
-  // Group pre-assigned recipes by machine for the prompt.
-  const byMachine = new Map<string, typeof assigned>();
+  // Group pre-assigned recipes by machine.
+  const byMachine = new Map<string, AssignedRecipe[]>();
   for (const r of assigned) {
     if (!byMachine.has(r.assignedMachine)) byMachine.set(r.assignedMachine, []);
     byMachine.get(r.assignedMachine)!.push(r);
   }
 
-  // Build the per-machine run requirement block for Claude.
-  const machineCapacityLines = rules.machines
-    .map((m) => `  - ${m.name}: ${m.tubs_per_run} tub${m.tubs_per_run === 1 ? "" : "s"} per run (fixed)`)
-    .join("\n");
-
-  const machineAssignmentBlock = Array.from(byMachine.entries())
-    .map(([machineName, recs]) => {
-      const machine = rules.machines.find((m) => m.name === machineName);
-      const tubsPerRun = machine?.tubs_per_run ?? 2;
-      const lines = recs.map((r) => {
-        const runsNeeded = Math.ceil(r.tubs / tubsPerRun);
-        return `    ${r.name}: ${r.tubs} tubs → ${runsNeeded} run${runsNeeded === 1 ? "" : "s"} [family: ${r.family}]`;
-      });
-      return `  ${machineName}:\n${lines.join("\n")}`;
+  // Phase 2: per-machine parallel Claude calls — each is much faster than one mega-call,
+  // and parallel total time ≈ max(per-machine time), well under Vercel Hobby's 60s cap.
+  const tStart = Date.now();
+  const machineSlices = await Promise.all(
+    rules.machines.map(async (m) => {
+      const recs = byMachine.get(m.name);
+      if (!recs || recs.length === 0) return emptyMachineSlice(m.name, rules);
+      return generateMachineRuns(m.name, recs, rules, systemPrompt);
     })
-    .join("\n\n");
+  );
+  console.log(`[generate] all ${rules.machines.length} machine calls completed in ${Date.now() - tStart}ms`);
 
-  const userMessage = `Generate an optimized production run list. Machine assignments are FIXED — do not move any recipe to a different machine.
-
-Machine capacities (fixed — do not change tub values in output):
-${machineCapacityLines}
-
-PRE-ASSIGNED RECIPES PER MACHINE (sequence and clean between runs optimally):
-${machineAssignmentBlock}
-
-Grand total: ${recipes.reduce((sum, r) => sum + r.tubs, 0)} tubs
-
-RECIPE DETAILS (for sequencing/allergen/cleaning decisions):
-${assigned.map((r) => `- ${r.name} [→ ${r.assignedMachine}]: ${r.tubs} tubs
-  Base: ${r.recipe.base.type} (${r.recipe.base.ingredients.join(", ")})
-  Add-ins: ${r.recipe.addIns.map((a) => `${a.name} [${a.taTrigger} TA]`).join(", ") || "none"}
-  Fold-ins: ${r.recipe.foldIns.map((f) => f.name).join(", ") || "none"}
-  Allergens: ${r.recipe.allergens.join(", ") || "none"}
-  44QT eligible: ${r.recipe.eligible44qt}`).join("\n\n")}
-
-Sequence each machine's runs optimally. Return JSON only.`;
-
-  const response = await client.messages.create({
-    model: "claude-sonnet-4-6",
-    max_tokens: 8000,
-    system: systemPrompt,
-    messages: [{ role: "user", content: userMessage }],
-  });
-
-  const text = response.content[0].type === "text" ? response.content[0].text : "";
-  let result: RunListOutput;
-  try {
-    result = parseRunListJson(text);
-  } catch (e) {
-    throw new Error(`Claude returned invalid JSON: ${e instanceof Error ? e.message : String(e)}`);
-  }
+  const result: RunListOutput = {
+    machines: machineSlices,
+    totals: { runs: 0, tubs: 0, gallons: 0, take_aparts: 0, rinses: 0, water_rinses: 0, no_cleans: 0 },
+  };
 
   // Deterministically enforce correct run counts and tub values.
   // Claude's sequencing and cleaning decisions are preserved, but quantities are ours.
