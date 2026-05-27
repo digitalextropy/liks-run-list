@@ -1,8 +1,8 @@
 # Deterministic Engine Refactor — Plan
 
 **Branch:** `deterministic-engine`
-**Status:** Stages 0 + 1 complete. Stage 2 next.
-**Last updated:** 2026-05-27 (post-Stage-1)
+**Status:** Stages 0 + 1 + 2 complete. Stage 3 next.
+**Last updated:** 2026-05-27 (post-Stage-2)
 
 This plan is self-contained. Any Claude Code session should be able to pick it up cold by reading this file plus the linked source files.
 
@@ -97,9 +97,7 @@ Shipped on `deterministic-engine` branch. Verified end-to-end on the preview dep
 - Vercel env vars: `AUTH_PASSWORD`, `ANTHROPIC_API_KEY`, and Supabase integration env vars now scope to Preview environment too (done in Vercel dashboard, not in code)
 - **master got a defensive cherry-pick** (commit `d729e27` on master): the same `migrate()` pass-through + lazy pool init, so prod's autosave doesn't wipe structured fields that the deterministic-engine branch seeds into the shared Vercel Blob
 
-### Stage 2 — `decideCleanAfter(prev, curr, rules)` in code (NEXT)
-
-**Goal:** add structured rule fields the engine can read, with a UI to edit them. Keep existing prose fields untouched.
+### Stage 2 — `decideCleanAfter(prev, curr, rules)` in code ✓ DONE (commit `c62e078`)
 
 Pure function over two consecutive runs + rules. Replaces Claude's per-pair `clean_after` decision with a deterministic table-driven lookup.
 
@@ -144,16 +142,16 @@ When the matching row's `clean_after === "from_allergen_table"`: look up `(prev.
 **Debug endpoint** (no UI; useful for cutover verification): `POST /api/debug/decide-clean-after`. Body: `{ rules, prev, curr }`. Returns the function's result. Lets you sanity-check edge cases without spinning up a generation.
 
 **Acceptance criteria for Stage 2:**
-- [ ] `decideCleanAfter` exported from `src/lib/deterministic-engine.ts`
-- [ ] All test cases pass via `node --test src/lib/deterministic-engine.test.ts` (or equivalent)
-- [ ] `/api/debug/decide-clean-after` endpoint works
-- [ ] Feature flag still defaults off — `/api/generate` still routes through Claude
-- [ ] `next build` succeeds locally
-- [ ] No regression: live preview generation still produces correct run lists
+- [x] `decideCleanAfter` exported from `src/lib/deterministic-engine.ts`
+- [x] All 7 test cases pass via `npx tsx --test src/lib/deterministic-engine.test.ts`
+- [x] `/api/debug/decide-clean-after` POST endpoint works (29/29 routes in build)
+- [x] Feature flag still defaults off — `/api/generate` still routes through Claude
+- [x] `next build` succeeds locally (29 routes)
+- [ ] No regression: live preview generation still produces correct run lists (verify after Vercel preview builds)
 
 **Deliverable:** commit(s) on `deterministic-engine` branch. Do not merge to master, do not enable the flag.
 
-### Stage 3 — `sequenceRuns(recipes, rules)` deterministic sequencer
+### Stage 3 — `sequenceRuns(recipes, rules)` deterministic sequencer (NEXT)
 
 After Stage 2. Solves the within-machine ordering problem: given a set of recipes assigned to a machine, produce the run order that minimizes take-aparts while respecting allergen partial order + base boldness order. With N ≤ ~15 per machine, exact branch-and-bound is tractable. Falls back to greedy heuristic if it ever isn't.
 
