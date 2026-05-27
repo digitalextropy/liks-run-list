@@ -1321,7 +1321,7 @@ function RecipeNoteCard({
   if (isEditing) {
     const overrides: RecipeOverrides = value.overrides ?? {};
     const machineNames = ctx.rules.machines.map((m) => m.name);
-    const allergenGroups = ctx.rules.allergen_order ?? DEFAULT_ALLERGEN_ORDER;
+    const familyKeys = ["vegan", "sorbet", "cheesecake", "chocolate", "coffee", "fruit_ta", "nut", "peanut", "plain"];
 
     function setOverride<K extends keyof RecipeOverrides>(key: K, v: RecipeOverrides[K]) {
       const next: RecipeOverrides = { ...overrides, [key]: v };
@@ -1372,7 +1372,7 @@ function RecipeNoteCard({
                 className="w-full px-2 py-1 border rounded text-xs mt-0.5"
               >
                 <option value="">— default —</option>
-                {allergenGroups.map((g) => (
+                {familyKeys.map((g) => (
                   <option key={g} value={g}>{g}</option>
                 ))}
               </select>

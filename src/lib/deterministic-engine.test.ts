@@ -1,7 +1,8 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { decideCleanAfter, sequenceRuns } from "./deterministic-engine";
-import type { AssignedRecipe } from "./machine-assigner";
+import { assignMachines } from "./machine-assigner";
+import type { AssignedRecipe, RecipeRequest } from "./machine-assigner";
 import type { ProductionRules } from "./rules-schema";
 
 // ─── Helpers ───
@@ -293,5 +294,78 @@ describe("sequenceRuns", () => {
     assert.equal(result[result.length - 1].name, "Butter Pecan");
     // All recipes present
     assert.equal(result.length, 5);
+  });
+});
+
+// ─── Stage: force_allergen_group and force_machine overrides ───
+
+describe("force_allergen_group override", () => {
+  it("overrides auto-detected family in sequencing", () => {
+    const nutRecipe = makeRecipe({
+      name: "Jack Daniels Chocolate Chip",
+      family: "nut",
+      recipe: {
+        name: "Jack Daniels Chocolate Chip",
+        base: { type: "plain", ingredients: [] },
+        addIns: [{ name: "Pecans", quantity: "1 cup", taTrigger: "always" }],
+        foldIns: [],
+        allergens: ["Tree Nuts"],
+        eligible44qt: false,
+        notes: null,
+      },
+    });
+    const plain = makeRecipe({ name: "Vanilla" });
+    const rules = minimalRules({
+      recipe_notes: [
+        { recipe: "Jack Daniels Chocolate Chip", note: "", overrides: { force_allergen_group: "chocolate" } },
+      ],
+    });
+
+    // When force_allergen_group is used via assignMachines, the family should be overridden
+    const request: RecipeRequest = {
+      name: "Jack Daniels Chocolate Chip",
+      tubs: 4,
+      recipe: nutRecipe.recipe,
+    };
+    const assigned = assignMachines([request], rules);
+    assert.equal(assigned[0].family, "chocolate");
+  });
+});
+
+describe("force_machine override", () => {
+  it("pins recipe to specified batch machine regardless of load balancing", () => {
+    const rules = minimalRules({
+      machines: [
+        { name: "Batch A", capacity_gallons: 6, tubs_per_run: 2, rules: "", warnings: [] },
+        { name: "Batch B", capacity_gallons: 6, tubs_per_run: 2, rules: "", warnings: [] },
+      ],
+      recipe_notes: [
+        { recipe: "Vanilla", note: "", overrides: { force_machine: "Batch B" } },
+      ],
+    });
+
+    const requests: RecipeRequest[] = [
+      { name: "Vanilla", tubs: 4, recipe: { name: "Vanilla", base: { type: "plain", ingredients: [] }, addIns: [], foldIns: [], allergens: [], eligible44qt: false, notes: null } },
+    ];
+    const assigned = assignMachines(requests, rules);
+    assert.equal(assigned[0].assignedMachine, "Batch B");
+  });
+
+  it("force_machine on vegan recipe overrides default first-machine assignment", () => {
+    const rules = minimalRules({
+      machines: [
+        { name: "Batch A", capacity_gallons: 6, tubs_per_run: 2, rules: "", warnings: [] },
+        { name: "Batch B", capacity_gallons: 6, tubs_per_run: 2, rules: "", warnings: [] },
+      ],
+      recipe_notes: [
+        { recipe: "Vegan Chocolate", note: "", overrides: { force_machine: "Batch B" } },
+      ],
+    });
+
+    const requests: RecipeRequest[] = [
+      { name: "Vegan Chocolate", tubs: 4, recipe: { name: "Vegan Chocolate", base: { type: "vegan", ingredients: [] }, addIns: [], foldIns: [], allergens: [], eligible44qt: false, notes: null } },
+    ];
+    const assigned = assignMachines(requests, rules);
+    assert.equal(assigned[0].assignedMachine, "Batch B");
   });
 });

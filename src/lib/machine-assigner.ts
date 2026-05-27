@@ -63,11 +63,27 @@ function detectFamily(r: RecipeRequest): FamilyKey {
   return "plain";
 }
 
+function getForcedMachine(r: RecipeRequest, rules: ProductionRules): string | undefined {
+  const note = rules.recipe_notes?.find(
+    n => n.recipe.toLowerCase().trim() === r.name.toLowerCase().trim()
+  );
+  return note?.overrides?.force_machine;
+}
+
 export function assignMachines(requests: RecipeRequest[], rules: ProductionRules): AssignedRecipe[] {
   const machines = rules.machines;
 
-  // Tag each recipe with its family
-  const tagged = requests.map((r) => ({ ...r, family: detectFamily(r) }));
+  // Tag each recipe with its family, honoring force_allergen_group overrides
+  const tagged = requests.map((r) => {
+    let family = detectFamily(r);
+    const note = rules.recipe_notes?.find(
+      n => n.recipe.toLowerCase().trim() === r.name.toLowerCase().trim()
+    );
+    if (note?.overrides?.force_allergen_group) {
+      family = note.overrides.force_allergen_group as FamilyKey;
+    }
+    return { ...r, family };
+  });
 
   // Special-case: single machine — everything goes there
   if (machines.length <= 1) {
@@ -90,7 +106,19 @@ export function assignMachines(requests: RecipeRequest[], rules: ProductionRules
     const tpr44 = machine44.tubs_per_run;
     const targetPerMachine = Math.round(totalTubs / machines.length);
 
+    // Force-pinned to 44QT go first
+    for (const r of tagged) {
+      const forced = getForcedMachine(r, rules);
+      if (forced && forced === machine44.name) {
+        assigned44.add(r);
+      }
+    }
+
     const eligible44Recipes = tagged.filter((r) => {
+      if (assigned44.has(r)) return false;
+      // If force_machine points to a non-44QT machine, exclude from 44QT
+      const forced = getForcedMachine(r, rules);
+      if (forced && forced !== machine44.name) return false;
       if (r.family === "vegan" || r.family === "sorbet") return false;
       if (!r.recipe.eligible44qt) return false;
       if (r.tubs % tpr44 !== 0) return false;
@@ -98,7 +126,7 @@ export function assignMachines(requests: RecipeRequest[], rules: ProductionRules
     });
     eligible44Recipes.sort((a, b) => b.tubs - a.tubs);
 
-    let tubs44 = 0;
+    let tubs44 = tagged.filter(r => assigned44.has(r)).reduce((s, r) => s + r.tubs, 0);
     for (const r of eligible44Recipes) {
       if (tubs44 + r.tubs <= targetPerMachine * 1.5 || tubs44 < targetPerMachine * 0.5) {
         assigned44.add(r);
@@ -135,19 +163,34 @@ export function assignMachines(requests: RecipeRequest[], rules: ProductionRules
     machineTubs.set(minMachine, (machineTubs.get(minMachine) ?? 0) + recipe.tubs);
   }
 
-  // Vegan goes to first batch machine (runs first of day)
+  function assignWithForceCheck(recipe: RecipeRequest, defaultAssign: () => void) {
+    const forced = getForcedMachine(recipe, rules);
+    if (forced) {
+      const target = batchMachines.find(m => m.name === forced) ?? machines.find(m => m.name === forced);
+      if (target && machineTubs.has(target.name)) {
+        machineAssignments.set(recipe, target.name);
+        machineTubs.set(target.name, (machineTubs.get(target.name) ?? 0) + recipe.tubs);
+        return;
+      }
+    }
+    defaultAssign();
+  }
+
+  // Vegan goes to first batch machine (runs first of day), unless force_machine overrides
   for (const r of veganRecipes) {
-    machineAssignments.set(r, batchMachines[0].name);
-    machineTubs.set(batchMachines[0].name, (machineTubs.get(batchMachines[0].name) ?? 0) + r.tubs);
+    assignWithForceCheck(r, () => {
+      machineAssignments.set(r, batchMachines[0].name);
+      machineTubs.set(batchMachines[0].name, (machineTubs.get(batchMachines[0].name) ?? 0) + r.tubs);
+    });
   }
 
   // Other recipes: largest first, greedy to least-loaded
   otherRecipes.sort((a, b) => b.tubs - a.tubs);
-  for (const r of otherRecipes) assignToLeastLoaded(r);
+  for (const r of otherRecipes) assignWithForceCheck(r, () => assignToLeastLoaded(r));
 
-  // Nuts and peanuts last (still balance across machines)
-  for (const r of nutRecipes) assignToLeastLoaded(r);
-  for (const r of peanutRecipes) assignToLeastLoaded(r);
+  // Nuts and peanuts last (still balance across machines), unless force_machine overrides
+  for (const r of nutRecipes) assignWithForceCheck(r, () => assignToLeastLoaded(r));
+  for (const r of peanutRecipes) assignWithForceCheck(r, () => assignToLeastLoaded(r));
 
   // Step 3: Build result with exact run counts
   const result: AssignedRecipe[] = [];
