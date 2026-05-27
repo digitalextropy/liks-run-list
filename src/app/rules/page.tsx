@@ -334,6 +334,11 @@ export default function RulesPage() {
         />
 
         <SubsectionHeader title="Family Transition Defaults" hint="Minimum clean step when transitioning between flavor families." />
+        <p className="text-[12px] text-gray-500 leading-relaxed -mt-0.5 mb-2">
+          Every recipe is auto-classified into a <strong className="text-gray-600">family</strong> based on its base type and add-ins:
+          {" "}<em>vegan, sorbet, cheesecake, chocolate, coffee, fruit, nut, peanut,</em> or <em>plain</em>.
+          The table below sets the minimum clean required when consecutive runs switch families.
+        </p>
         <FamilyTransitionTable
           defaults={rules.family_transition_defaults ?? []}
           onChange={(next) => update("family_transition_defaults", next)}
@@ -398,13 +403,13 @@ export default function RulesPage() {
         />
       </Section>
 
-      {/* TA TRIGGERS */}
+      {/* CLEANING TRIGGERS */}
       <Section
         icon="🔧"
         iconColor="#dc2626"
         iconBg="#fef2f2"
-        title="Take-Apart Triggers"
-        description="Classifies add-ins by whether they require a take-apart. Engine reads these when deciding clean steps between runs."
+        title="Cleaning Triggers"
+        description="Classifies add-ins and recipes by the cleaning they require. Engine reads these when deciding clean steps between runs."
         onAdd={() =>
           update("ta_triggers", [
             ...rules.ta_triggers,
@@ -421,6 +426,8 @@ export default function RulesPage() {
             update("ta_triggers_callouts_top", [{ type: "critical", text: "New callout" }])
           }
         />
+
+        <SubsectionHeader title="Take-Apart Triggers" hint="Add-ins that require a take-apart between runs." />
 
         <TriggerCategoryBlock
           title="Always Take Apart — these add-ins stick in the blades"
@@ -473,6 +480,23 @@ export default function RulesPage() {
             ctx={editorCtx}
             inline
           />
+        </div>
+
+        <SubsectionHeader title="Rinse Triggers" hint="Recipes that require a full Rinse before and after — stronger than a take-apart." />
+        <div className="space-y-1.5">
+          {rules.recipe_notes
+            .filter((n) => n.overrides?.force_clean_after)
+            .map((n, i) => (
+              <div key={`rinse-${i}`} className="flex items-center gap-2 px-2 py-1.5 rounded bg-purple-50 border border-purple-200">
+                <span className="w-2 h-2 rounded-full bg-purple-500 shrink-0" />
+                <span className="text-[13px] font-medium text-purple-800">{n.recipe}</span>
+                <span className="text-[11px] text-purple-500">→ {n.overrides!.force_clean_after} before & after</span>
+                {n.note && <span className="text-[11px] text-gray-500 ml-auto italic">{n.note}</span>}
+              </div>
+            ))}
+          {rules.recipe_notes.filter((n) => n.overrides?.force_clean_after).length === 0 && (
+            <p className="text-xs text-gray-400 italic">No rinse triggers configured</p>
+          )}
         </div>
 
         <CalloutsList
@@ -540,63 +564,6 @@ export default function RulesPage() {
         />
       </Section>
 
-      {/* ═══ GROUP: RECIPE OVERRIDES & GUARDRAILS ═══ */}
-      <SectionGroup title="Recipe Overrides & Guardrails" />
-
-      {/* RECIPE NOTES */}
-      <Section
-        icon="📋"
-        iconColor="#92400e"
-        iconBg="#fef3c7"
-        title="Recipe-Specific Notes"
-        description="Per-recipe overrides and notes. Engine overrides (allergen group, clean level, machine) are enforced directly. Text notes are AI-only context."
-        onAdd={() =>
-          update("recipe_notes", [
-            ...rules.recipe_notes,
-            { recipe: "New Recipe", note: "" },
-          ])
-        }
-      >
-        <div className="space-y-2">
-          {rules.recipe_notes.map((n, i) => (
-            <RecipeNoteCard
-              key={`rn-${i}`}
-              keyId={`rn-${i}`}
-              value={n}
-              ctx={editorCtx}
-              onChange={(next) =>
-                update(
-                  "recipe_notes",
-                  rules.recipe_notes.map((x, idx) => (idx === i ? next : x))
-                )
-              }
-              onDelete={() =>
-                update("recipe_notes", rules.recipe_notes.filter((_, idx) => idx !== i))
-              }
-            />
-          ))}
-        </div>
-      </Section>
-
-      {/* CRITICAL RULES */}
-      <Section
-        icon="🚨"
-        iconColor="#991b1b"
-        iconBg="#fef2f2"
-        title="Critical Rules"
-        description="Top-level constraints the AI prose layer references. The deterministic engine encodes these structurally — this list is for human and AI reference."
-        onAdd={() => update("critical_rules", [...(rules.critical_rules || []), "New rule"])}
-      >
-        <p className="text-xs text-gray-500 -mt-1 mb-2">
-          These are passed to the AI as highest-priority instructions that override everything else. Edit or add rules here to change how the run list is generated.
-        </p>
-        <RuleList
-          items={rules.critical_rules || []}
-          ctx={editorCtx}
-          keyPrefix="cr"
-          onChange={(next) => update("critical_rules", next)}
-        />
-      </Section>
     </div>
   );
 }
