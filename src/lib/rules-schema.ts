@@ -63,4 +63,16 @@ export interface ProductionRules {
   recipe_notes: RecipeNote[];
   day_structure: DayPhase[];
   critical_rules: string[];
+
+  // Optional structured fields read by the upcoming deterministic engine on the
+  // deterministic-engine branch. Declared here so the rules API preserves them
+  // across edits even though the production UI on master doesn't render them yet.
+  // Removing or skipping these would cause data loss when prod autosaves.
+  allergen_order?: string[];
+  allergen_transitions?: unknown[];
+  base_boldness_order?: string[];
+  family_transition_defaults?: unknown[];
+  cleaning_decision_table?: unknown[];
+  optimization_flags?: Record<string, boolean>;
+  forty_four_qt_eligibility?: Record<string, unknown>;
 }

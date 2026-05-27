@@ -80,6 +80,17 @@ function migrate(raw: any): ProductionRules {
     recipe_notes: Array.isArray(raw.recipe_notes) ? raw.recipe_notes : [],
     day_structure: Array.isArray(raw.day_structure) ? raw.day_structure : [],
     critical_rules: Array.isArray(raw.critical_rules) && raw.critical_rules.length > 0 ? raw.critical_rules : DEFAULT_CRITICAL_RULES,
+
+    // Pass-through for optional structured fields the upcoming deterministic
+    // engine will read. The UI on master doesn't render these yet, but we must
+    // not drop them — autosave would round-trip back and wipe them from blob.
+    allergen_order: Array.isArray(raw.allergen_order) ? raw.allergen_order : undefined,
+    allergen_transitions: Array.isArray(raw.allergen_transitions) ? raw.allergen_transitions : undefined,
+    base_boldness_order: Array.isArray(raw.base_boldness_order) ? raw.base_boldness_order : undefined,
+    family_transition_defaults: Array.isArray(raw.family_transition_defaults) ? raw.family_transition_defaults : undefined,
+    cleaning_decision_table: Array.isArray(raw.cleaning_decision_table) ? raw.cleaning_decision_table : undefined,
+    optimization_flags: raw.optimization_flags && typeof raw.optimization_flags === "object" ? raw.optimization_flags : undefined,
+    forty_four_qt_eligibility: raw.forty_four_qt_eligibility && typeof raw.forty_four_qt_eligibility === "object" ? raw.forty_four_qt_eligibility : undefined,
   };
 }
 
