@@ -137,8 +137,8 @@ export default function RulesPage() {
         <SaveIndicator state={saveState} />
       </div>
 
-      {/* ═══ GROUP: MACHINE & DAY SETUP ═══ */}
-      <SectionGroup title="Machine & Day Setup" />
+      {/* ═══ GROUP: MACHINE SETUP ═══ */}
+      <SectionGroup title="Machine Setup" />
 
       {/* MACHINES */}
       <Section
@@ -227,43 +227,44 @@ export default function RulesPage() {
         />
       </Section>
 
-      {/* DAY STRUCTURE */}
-      <Section
-        icon="📅"
-        iconColor="#1e3a5f"
-        iconBg="#f0f4f8"
-        title="Day Structure Template"
-        description="Defines the phases of a production day. Used by the AI prose layer for context; not read by the deterministic engine."
-        onAdd={() =>
-          update("day_structure", [
-            ...rules.day_structure,
-            { order: rules.day_structure.length + 1, phase: "New Phase", description: "" },
-          ])
-        }
-      >
-        <div className="divide-y divide-gray-100">
-          {rules.day_structure.map((d, i) => (
-            <DayPhaseRow
-              key={`day-${i}`}
-              keyId={`day-${i}`}
-              value={d}
-              ctx={editorCtx}
-              onChange={(next) =>
-                update(
-                  "day_structure",
-                  rules.day_structure.map((x, idx) => (idx === i ? next : x))
-                )
-              }
-              onDelete={() =>
-                update("day_structure", rules.day_structure.filter((_, idx) => idx !== i))
-              }
-            />
-          ))}
-        </div>
-      </Section>
-
       {/* ═══ GROUP: SEQUENCING & CLEANING ═══ */}
       <SectionGroup title="Sequencing & Cleaning" />
+
+      {/* SEQUENCING */}
+      <Section
+        icon="🎨"
+        iconColor="#1d4ed8"
+        iconBg="#eff6ff"
+        title="Flavor & Base Sequencing"
+        description="Controls within-machine ordering by flavor boldness and family transitions. Engine uses boldness order and family defaults."
+        onAdd={() => update("sequencing_rules", [...rules.sequencing_rules, "New rule"])}
+      >
+        <SubsectionHeader title="Base Boldness Order" hint="Within a machine, run mild (top) → bold (bottom). Used by the deterministic sequencer." />
+        <OrderedStringList
+          items={rules.base_boldness_order ?? DEFAULT_BASE_BOLDNESS_ORDER}
+          onChange={(next) => update("base_boldness_order", next)}
+          placeholder="base type (e.g. plain, chocolate)"
+        />
+
+        <SubsectionHeader title="Family Transition Defaults" hint="Minimum clean step when transitioning between flavor families." />
+        <p className="text-[12px] text-gray-500 leading-relaxed -mt-0.5 mb-2">
+          Every recipe is auto-classified into a <strong className="text-gray-600">family</strong> based on its base type and add-ins:
+          {" "}<em>vegan, sorbet, cheesecake, chocolate, coffee, fruit, nut, peanut,</em> or <em>plain</em>.
+          The table below sets the minimum clean required when consecutive runs switch families.
+        </p>
+        <FamilyTransitionTable
+          defaults={rules.family_transition_defaults ?? []}
+          onChange={(next) => update("family_transition_defaults", next)}
+        />
+
+        <SubsectionHeader title="Notes & nuance" hint="Free-text rules — context for the AI prose layer and human reference." />
+        <RuleList
+          items={rules.sequencing_rules}
+          ctx={editorCtx}
+          keyPrefix="sq"
+          onChange={(next) => update("sequencing_rules", next)}
+        />
+      </Section>
 
       {/* ALLERGENS */}
       <Section
@@ -314,42 +315,6 @@ export default function RulesPage() {
           onChange={(next) => update("allergen_rules_callouts", next)}
           ctx={editorCtx}
           keyPrefix="al-callout"
-        />
-      </Section>
-
-      {/* SEQUENCING */}
-      <Section
-        icon="🎨"
-        iconColor="#1d4ed8"
-        iconBg="#eff6ff"
-        title="Flavor & Base Sequencing"
-        description="Controls within-machine ordering by flavor boldness and family transitions. Engine uses boldness order and family defaults."
-        onAdd={() => update("sequencing_rules", [...rules.sequencing_rules, "New rule"])}
-      >
-        <SubsectionHeader title="Base Boldness Order" hint="Within a machine, run mild (top) → bold (bottom). Used by the deterministic sequencer." />
-        <OrderedStringList
-          items={rules.base_boldness_order ?? DEFAULT_BASE_BOLDNESS_ORDER}
-          onChange={(next) => update("base_boldness_order", next)}
-          placeholder="base type (e.g. plain, chocolate)"
-        />
-
-        <SubsectionHeader title="Family Transition Defaults" hint="Minimum clean step when transitioning between flavor families." />
-        <p className="text-[12px] text-gray-500 leading-relaxed -mt-0.5 mb-2">
-          Every recipe is auto-classified into a <strong className="text-gray-600">family</strong> based on its base type and add-ins:
-          {" "}<em>vegan, sorbet, cheesecake, chocolate, coffee, fruit, nut, peanut,</em> or <em>plain</em>.
-          The table below sets the minimum clean required when consecutive runs switch families.
-        </p>
-        <FamilyTransitionTable
-          defaults={rules.family_transition_defaults ?? []}
-          onChange={(next) => update("family_transition_defaults", next)}
-        />
-
-        <SubsectionHeader title="Notes & nuance" hint="Free-text rules — context for the AI prose layer and human reference." />
-        <RuleList
-          items={rules.sequencing_rules}
-          ctx={editorCtx}
-          keyPrefix="sq"
-          onChange={(next) => update("sequencing_rules", next)}
         />
       </Section>
 
@@ -566,6 +531,41 @@ export default function RulesPage() {
 
       {/* ═══ GROUP: REFERENCE ═══ */}
       <SectionGroup title="Reference" />
+
+      {/* DAY STRUCTURE */}
+      <Section
+        icon="📅"
+        iconColor="#1e3a5f"
+        iconBg="#f0f4f8"
+        title="Day Structure Template"
+        description="Defines the phases of a production day. Used by the AI prose layer for context; not read by the deterministic engine."
+        onAdd={() =>
+          update("day_structure", [
+            ...rules.day_structure,
+            { order: rules.day_structure.length + 1, phase: "New Phase", description: "" },
+          ])
+        }
+      >
+        <div className="divide-y divide-gray-100">
+          {rules.day_structure.map((d, i) => (
+            <DayPhaseRow
+              key={`day-${i}`}
+              keyId={`day-${i}`}
+              value={d}
+              ctx={editorCtx}
+              onChange={(next) =>
+                update(
+                  "day_structure",
+                  rules.day_structure.map((x, idx) => (idx === i ? next : x))
+                )
+              }
+              onDelete={() =>
+                update("day_structure", rules.day_structure.filter((_, idx) => idx !== i))
+              }
+            />
+          ))}
+        </div>
+      </Section>
 
       {/* HOW IT WORKS */}
       <Section
