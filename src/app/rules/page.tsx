@@ -177,12 +177,16 @@ export default function RulesPage() {
         <SaveIndicator state={saveState} />
       </div>
 
+      {/* ═══ GROUP: MACHINE & DAY SETUP ═══ */}
+      <SectionGroup title="Machine & Day Setup" />
+
       {/* MACHINES */}
       <Section
         icon="⚙"
         iconColor="#1e40af"
         iconBg="#dbeafe"
         title="Machines"
+        description="Physical machines available for scheduling. The engine assigns recipes across these based on capacity and balance."
         onAdd={() =>
           update("machines", [
             ...rules.machines,
@@ -217,12 +221,180 @@ export default function RulesPage() {
         />
       </Section>
 
+      {/* 44 QT */}
+      <Section
+        icon="🏭"
+        iconColor="#16a34a"
+        iconBg="#f0fdf4"
+        title="44 QT Machine Assignment"
+        description="Controls which recipes are eligible for the high-capacity 44 QT machine. Engine uses these filters during assignment."
+        onAddCallout={() =>
+          update("forty_four_qt_callouts", [...rules.forty_four_qt_callouts, { type: "info", text: "New callout" }])
+        }
+      >
+        <SubsectionHeader title="Eligibility" hint="Recipes excluded from the 44 QT machine by category." />
+        <FortyFourQtEligibility
+          rules={rules.forty_four_qt_eligibility ?? DEFAULT_FORTY_FOUR_QT_ELIGIBILITY}
+          onChange={(next) => update("forty_four_qt_eligibility", next)}
+        />
+
+        <SubsectionHeader title="Notes & nuance" hint="Free-text rule — context for the AI prose layer and human reference." />
+        <EditableInline
+          keyId="44qt-rule"
+          ctx={editorCtx}
+          view={
+            <p className="text-[13px] text-gray-800 leading-relaxed">
+              {rules.forty_four_qt_rule || (
+                <span className="italic text-gray-400">Click to add the rule…</span>
+              )}
+            </p>
+          }
+          edit={
+            <textarea
+              autoFocus
+              value={rules.forty_four_qt_rule}
+              onChange={(e) => update("forty_four_qt_rule", e.target.value)}
+              rows={3}
+              className="w-full px-2 py-1 border rounded text-sm"
+            />
+          }
+        />
+        <CalloutsList
+          callouts={rules.forty_four_qt_callouts}
+          onChange={(next) => update("forty_four_qt_callouts", next)}
+          ctx={editorCtx}
+          keyPrefix="44qt-callout"
+        />
+      </Section>
+
+      {/* DAY STRUCTURE */}
+      <Section
+        icon="📅"
+        iconColor="#1e3a5f"
+        iconBg="#f0f4f8"
+        title="Day Structure Template"
+        description="Defines the phases of a production day. Used by the AI prose layer for context; not read by the deterministic engine."
+        onAdd={() =>
+          update("day_structure", [
+            ...rules.day_structure,
+            { order: rules.day_structure.length + 1, phase: "New Phase", description: "" },
+          ])
+        }
+      >
+        <div className="divide-y divide-gray-100">
+          {rules.day_structure.map((d, i) => (
+            <DayPhaseRow
+              key={`day-${i}`}
+              keyId={`day-${i}`}
+              value={d}
+              ctx={editorCtx}
+              onChange={(next) =>
+                update(
+                  "day_structure",
+                  rules.day_structure.map((x, idx) => (idx === i ? next : x))
+                )
+              }
+              onDelete={() =>
+                update("day_structure", rules.day_structure.filter((_, idx) => idx !== i))
+              }
+            />
+          ))}
+        </div>
+      </Section>
+
+      {/* ═══ GROUP: SEQUENCING & CLEANING ═══ */}
+      <SectionGroup title="Sequencing & Cleaning" />
+
+      {/* ALLERGENS */}
+      <Section
+        icon="⚕"
+        iconColor="#7c3aed"
+        iconBg="#f5f3ff"
+        title="Allergen Sequencing"
+        description="Controls cross-machine allergen ordering and transition rules. The engine uses allergen order and transition overrides to schedule safely."
+        onAdd={() => update("allergen_rules", [...rules.allergen_rules, "New rule"])}
+        onAddCallout={() =>
+          update("allergen_rules_callouts", [...rules.allergen_rules_callouts, { type: "info", text: "New callout" }])
+        }
+      >
+        <SubsectionHeader title="Allergen Order" hint="Run earlier (top) → run later (bottom). Used by the deterministic engine to schedule across machines." />
+        <OrderedStringList
+          items={rules.allergen_order ?? DEFAULT_ALLERGEN_ORDER}
+          onChange={(next) => update("allergen_order", next)}
+          placeholder="allergen group key (e.g. tree_nut)"
+          firstLastLabels={{ first: "first of day", last: "end of day" }}
+        />
+
+        <SubsectionHeader
+          title="Transition Overrides"
+          hint="Force a specific clean level when transitioning between two allergen groups."
+          onAdd={() =>
+            update("allergen_transitions", [
+              ...(rules.allergen_transitions ?? []),
+              { from: "peanut", to: "tree_nut", required_clean: "TAKE_APART", reason: "" },
+            ])
+          }
+        />
+        <AllergenTransitionsTable
+          transitions={rules.allergen_transitions ?? []}
+          allergenOrder={rules.allergen_order ?? DEFAULT_ALLERGEN_ORDER}
+          ctx={editorCtx}
+          onChange={(next) => update("allergen_transitions", next)}
+        />
+
+        <SubsectionHeader title="Notes & nuance" hint="Free-text rules — context for the AI prose layer and human reference." />
+        <RuleList
+          items={rules.allergen_rules}
+          ctx={editorCtx}
+          keyPrefix="al"
+          onChange={(next) => update("allergen_rules", next)}
+        />
+        <CalloutsList
+          callouts={rules.allergen_rules_callouts}
+          onChange={(next) => update("allergen_rules_callouts", next)}
+          ctx={editorCtx}
+          keyPrefix="al-callout"
+        />
+      </Section>
+
+      {/* SEQUENCING */}
+      <Section
+        icon="🎨"
+        iconColor="#1d4ed8"
+        iconBg="#eff6ff"
+        title="Flavor & Base Sequencing"
+        description="Controls within-machine ordering by flavor boldness and family transitions. Engine uses boldness order and family defaults."
+        onAdd={() => update("sequencing_rules", [...rules.sequencing_rules, "New rule"])}
+      >
+        <SubsectionHeader title="Base Boldness Order" hint="Within a machine, run mild (top) → bold (bottom). Used by the deterministic sequencer." />
+        <OrderedStringList
+          items={rules.base_boldness_order ?? DEFAULT_BASE_BOLDNESS_ORDER}
+          onChange={(next) => update("base_boldness_order", next)}
+          placeholder="base type (e.g. plain, chocolate)"
+        />
+
+        <SubsectionHeader title="Family Transition Defaults" hint="Minimum clean step when transitioning between flavor families." />
+        <FamilyTransitionTable
+          defaults={rules.family_transition_defaults ?? []}
+          onChange={(next) => update("family_transition_defaults", next)}
+        />
+
+        <SubsectionHeader title="Notes & nuance" hint="Free-text rules — context for the AI prose layer and human reference." />
+        <RuleList
+          items={rules.sequencing_rules}
+          ctx={editorCtx}
+          keyPrefix="sq"
+          onChange={(next) => update("sequencing_rules", next)}
+        />
+      </Section>
+
       {/* CLEANING TIERS */}
       <Section
         icon="🧼"
         iconColor="#16a34a"
         iconBg="#f0fdf4"
         title="Cleaning Tiers"
+        description="Defines the available cleaning levels and their durations. Referenced by the cleaning decision table."
         onAdd={() =>
           update("cleaning_tiers", [
             ...rules.cleaning_tiers,
@@ -272,6 +444,7 @@ export default function RulesPage() {
         iconColor="#dc2626"
         iconBg="#fef2f2"
         title="Take-Apart Triggers"
+        description="Classifies add-ins by whether they require a take-apart. Engine reads these when deciding clean steps between runs."
         onAdd={() =>
           update("ta_triggers", [
             ...rules.ta_triggers,
@@ -353,93 +526,13 @@ export default function RulesPage() {
         />
       </Section>
 
-      {/* ALLERGENS */}
-      <Section
-        icon="⚕"
-        iconColor="#7c3aed"
-        iconBg="#f5f3ff"
-        title="Allergen Sequencing"
-        onAdd={() => update("allergen_rules", [...rules.allergen_rules, "New rule"])}
-        onAddCallout={() =>
-          update("allergen_rules_callouts", [...rules.allergen_rules_callouts, { type: "info", text: "New callout" }])
-        }
-      >
-        <SubsectionHeader title="Allergen Order" hint="Run earlier (top) → run later (bottom). Used by the deterministic engine to schedule across machines." />
-        <OrderedStringList
-          items={rules.allergen_order ?? DEFAULT_ALLERGEN_ORDER}
-          onChange={(next) => update("allergen_order", next)}
-          placeholder="allergen group key (e.g. tree_nut)"
-          firstLastLabels={{ first: "first of day", last: "end of day" }}
-        />
-
-        <SubsectionHeader
-          title="Transition Overrides"
-          hint="Force a specific clean level when transitioning between two allergen groups."
-          onAdd={() =>
-            update("allergen_transitions", [
-              ...(rules.allergen_transitions ?? []),
-              { from: "peanut", to: "tree_nut", required_clean: "TAKE_APART", reason: "" },
-            ])
-          }
-        />
-        <AllergenTransitionsTable
-          transitions={rules.allergen_transitions ?? []}
-          allergenOrder={rules.allergen_order ?? DEFAULT_ALLERGEN_ORDER}
-          ctx={editorCtx}
-          onChange={(next) => update("allergen_transitions", next)}
-        />
-
-        <SubsectionHeader title="Notes & nuance" hint="Free-text rules — context for the AI prose layer and human reference." />
-        <RuleList
-          items={rules.allergen_rules}
-          ctx={editorCtx}
-          keyPrefix="al"
-          onChange={(next) => update("allergen_rules", next)}
-        />
-        <CalloutsList
-          callouts={rules.allergen_rules_callouts}
-          onChange={(next) => update("allergen_rules_callouts", next)}
-          ctx={editorCtx}
-          keyPrefix="al-callout"
-        />
-      </Section>
-
-      {/* SEQUENCING */}
-      <Section
-        icon="🎨"
-        iconColor="#1d4ed8"
-        iconBg="#eff6ff"
-        title="Flavor & Base Sequencing"
-        onAdd={() => update("sequencing_rules", [...rules.sequencing_rules, "New rule"])}
-      >
-        <SubsectionHeader title="Base Boldness Order" hint="Within a machine, run mild (top) → bold (bottom). Used by the deterministic sequencer." />
-        <OrderedStringList
-          items={rules.base_boldness_order ?? DEFAULT_BASE_BOLDNESS_ORDER}
-          onChange={(next) => update("base_boldness_order", next)}
-          placeholder="base type (e.g. plain, chocolate)"
-        />
-
-        <SubsectionHeader title="Family Transition Defaults" hint="Minimum clean step when transitioning between flavor families." />
-        <FamilyTransitionTable
-          defaults={rules.family_transition_defaults ?? []}
-          onChange={(next) => update("family_transition_defaults", next)}
-        />
-
-        <SubsectionHeader title="Notes & nuance" hint="Free-text rules — context for the AI prose layer and human reference." />
-        <RuleList
-          items={rules.sequencing_rules}
-          ctx={editorCtx}
-          keyPrefix="sq"
-          onChange={(next) => update("sequencing_rules", next)}
-        />
-      </Section>
-
-      {/* CLEANING DECISION TABLE — new section */}
+      {/* CLEANING DECISION TABLE */}
       <Section
         icon="🧹"
         iconColor="#0891b2"
         iconBg="#ecfeff"
         title="Cleaning Decision Table"
+        description="Priority-ordered rules the engine evaluates to decide the clean step between consecutive runs. First match wins."
         onAdd={() =>
           update("cleaning_decision_table", [
             ...(rules.cleaning_decision_table ?? []),
@@ -469,6 +562,7 @@ export default function RulesPage() {
         iconColor="#d97706"
         iconBg="#fffbeb"
         title="Optimization Rules"
+        description="Toggle strategies the engine uses to minimize cleaning time and improve flow."
         onAdd={() => update("optimization_rules", [...rules.optimization_rules, "New rule"])}
       >
         <SubsectionHeader title="Active Strategies" hint="Toggle which optimizations the deterministic engine applies." />
@@ -486,50 +580,8 @@ export default function RulesPage() {
         />
       </Section>
 
-      {/* 44 QT */}
-      <Section
-        icon="🏭"
-        iconColor="#16a34a"
-        iconBg="#f0fdf4"
-        title="44 QT Machine Assignment"
-        onAddCallout={() =>
-          update("forty_four_qt_callouts", [...rules.forty_four_qt_callouts, { type: "info", text: "New callout" }])
-        }
-      >
-        <SubsectionHeader title="Eligibility" hint="Recipes excluded from the 44 QT machine by category." />
-        <FortyFourQtEligibility
-          rules={rules.forty_four_qt_eligibility ?? DEFAULT_FORTY_FOUR_QT_ELIGIBILITY}
-          onChange={(next) => update("forty_four_qt_eligibility", next)}
-        />
-
-        <SubsectionHeader title="Notes & nuance" hint="Free-text rule — context for the AI prose layer and human reference." />
-        <EditableInline
-          keyId="44qt-rule"
-          ctx={editorCtx}
-          view={
-            <p className="text-[13px] text-gray-800 leading-relaxed">
-              {rules.forty_four_qt_rule || (
-                <span className="italic text-gray-400">Click to add the rule…</span>
-              )}
-            </p>
-          }
-          edit={
-            <textarea
-              autoFocus
-              value={rules.forty_four_qt_rule}
-              onChange={(e) => update("forty_four_qt_rule", e.target.value)}
-              rows={3}
-              className="w-full px-2 py-1 border rounded text-sm"
-            />
-          }
-        />
-        <CalloutsList
-          callouts={rules.forty_four_qt_callouts}
-          onChange={(next) => update("forty_four_qt_callouts", next)}
-          ctx={editorCtx}
-          keyPrefix="44qt-callout"
-        />
-      </Section>
+      {/* ═══ GROUP: RECIPE OVERRIDES & GUARDRAILS ═══ */}
+      <SectionGroup title="Recipe Overrides & Guardrails" />
 
       {/* RECIPE NOTES */}
       <Section
@@ -537,6 +589,7 @@ export default function RulesPage() {
         iconColor="#92400e"
         iconBg="#fef3c7"
         title="Recipe-Specific Notes"
+        description="Per-recipe overrides and notes. Engine overrides (allergen group, clean level, machine) are enforced directly. Text notes are AI-only context."
         onAdd={() =>
           update("recipe_notes", [
             ...rules.recipe_notes,
@@ -571,6 +624,7 @@ export default function RulesPage() {
         iconColor="#991b1b"
         iconBg="#fef2f2"
         title="Critical Rules"
+        description="Top-level constraints the AI prose layer references. The deterministic engine encodes these structurally — this list is for human and AI reference."
         onAdd={() => update("critical_rules", [...(rules.critical_rules || []), "New rule"])}
       >
         <p className="text-xs text-gray-500 -mt-1 mb-2">
@@ -583,40 +637,20 @@ export default function RulesPage() {
           onChange={(next) => update("critical_rules", next)}
         />
       </Section>
+    </div>
+  );
+}
 
-      {/* DAY STRUCTURE */}
-      <Section
-        icon="📅"
-        iconColor="#1e3a5f"
-        iconBg="#f0f4f8"
-        title="Day Structure Template"
-        onAdd={() =>
-          update("day_structure", [
-            ...rules.day_structure,
-            { order: rules.day_structure.length + 1, phase: "New Phase", description: "" },
-          ])
-        }
-      >
-        <div className="divide-y divide-gray-100">
-          {rules.day_structure.map((d, i) => (
-            <DayPhaseRow
-              key={`day-${i}`}
-              keyId={`day-${i}`}
-              value={d}
-              ctx={editorCtx}
-              onChange={(next) =>
-                update(
-                  "day_structure",
-                  rules.day_structure.map((x, idx) => (idx === i ? next : x))
-                )
-              }
-              onDelete={() =>
-                update("day_structure", rules.day_structure.filter((_, idx) => idx !== i))
-              }
-            />
-          ))}
-        </div>
-      </Section>
+// ─────────────────────────────────────────────────────────────────────────
+// Section group divider
+
+function SectionGroup({ title }: { title: string }) {
+  return (
+    <div className="flex items-center gap-3 pt-4 pb-1">
+      <h2 className="text-[11px] font-bold uppercase tracking-[0.15em] text-gray-400 whitespace-nowrap">
+        {title}
+      </h2>
+      <div className="flex-1 h-px bg-gray-200" />
     </div>
   );
 }
@@ -639,6 +673,7 @@ function Section({
   iconColor,
   iconBg,
   title,
+  description,
   onAdd,
   onAddCallout,
   children,
@@ -647,6 +682,7 @@ function Section({
   iconColor: string;
   iconBg: string;
   title: string;
+  description?: string;
   onAdd?: () => void;
   onAddCallout?: () => void;
   children: React.ReactNode;
@@ -665,7 +701,12 @@ function Section({
         >
           {icon}
         </div>
-        <h2 className="text-[15px] font-semibold text-gray-900 flex-1">{title}</h2>
+        <div className="flex-1 min-w-0">
+          <h2 className="text-[15px] font-semibold text-gray-900">{title}</h2>
+          {description && open && (
+            <p className="text-[11px] text-gray-400 leading-snug mt-0.5">{description}</p>
+          )}
+        </div>
         <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
           {onAddCallout && (
             <button
