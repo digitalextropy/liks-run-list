@@ -1,8 +1,8 @@
 # Deterministic Engine Refactor — Plan
 
 **Branch:** `deterministic-engine`
-**Status:** Stage 0 complete (scaffolding + safety layers). Stage 1 next.
-**Last updated:** 2026-05-27
+**Status:** Stages 0 + 1 complete. Stage 2 next.
+**Last updated:** 2026-05-27 (post-Stage-1)
 
 This plan is self-contained. Any Claude Code session should be able to pick it up cold by reading this file plus the linked source files.
 
@@ -79,113 +79,79 @@ Claude is no longer load-bearing for correctness. If the AI prose layer fails, t
 - Backups in `backups/`
 - Git tag `v1-pre-deterministic`
 
-### Stage 1 — Structured rule schema + Rules page UI (NEXT)
+### Stage 1 — Structured rule schema + Rules page UI ✓ DONE (commit `4c835b8`)
+
+Shipped on `deterministic-engine` branch. Verified end-to-end on the preview deploy at `https://liks-run-list-git-deterministi-10e206-justins-projects-3e4f6a3c.vercel.app`:
+
+- All 7 new optional `ProductionRules` fields are declared in [src/lib/rules-schema.ts](src/lib/rules-schema.ts)
+- New types: `CleanLevel`, `AllergenTransition`, `FamilyTransitionDefault`, `FamilyTransitionScenario`, `CleanDecisionRow`, `CleanDecisionConditionKind`, `FortyFourQtRules`, `RecipeOverrides` + named-constant exports (`OPTIMIZATION_FLAG_KEYS`, `DEFAULT_*`)
+- Rules page UI extended with structured sub-sections inside Allergen Sequencing, Flavor & Base Sequencing, Optimization Rules, 44 QT Machine Assignment + a NEW "Cleaning Decision Table" section + per-recipe Overrides in Recipe Notes
+- `RecipeNote.overrides` optional field with force_allergen_group / force_clean_after / force_machine
+- `POST /api/rules/seed-structured` returns sensible static defaults; client merges into rules state, existing autosave persists to Vercel Blob
+- "Seed structured defaults" / "Reseed structured defaults" button at top of Rules page
+- `/api/rules` GET `migrate()` updated to pass through the new fields (otherwise GET strips them and autosave wipes them)
+- Local `next build` verified: 28/28 routes compile
+
+**Side-quests landed during Stage 1:**
+- Vercel preview deploys unblocked (commit `19909ca`): lazy-init `@vercel/postgres` pool to avoid module-load-time throw when `POSTGRES_URL` is unset
+- Vercel env vars: `AUTH_PASSWORD`, `ANTHROPIC_API_KEY`, and Supabase integration env vars now scope to Preview environment too (done in Vercel dashboard, not in code)
+- **master got a defensive cherry-pick** (commit `d729e27` on master): the same `migrate()` pass-through + lazy pool init, so prod's autosave doesn't wipe structured fields that the deterministic-engine branch seeds into the shared Vercel Blob
+
+### Stage 2 — `decideCleanAfter(prev, curr, rules)` in code (NEXT)
 
 **Goal:** add structured rule fields the engine can read, with a UI to edit them. Keep existing prose fields untouched.
 
-**Schema additions** (all OPTIONAL on `ProductionRules` — backward compatible):
+Pure function over two consecutive runs + rules. Replaces Claude's per-pair `clean_after` decision with a deterministic table-driven lookup.
 
+**Signature:**
 ```ts
-// Add to src/lib/rules-schema.ts
-interface ProductionRules {
-  // ─── existing fields, unchanged ─────────────────────────
-  // machines, cleaning_tiers, ta_triggers, allergen_rules,
-  // sequencing_rules, optimization_rules, forty_four_qt_rule,
-  // critical_rules, recipe_notes, day_structure, *_callouts
-
-  // ─── NEW optional fields ─────────────────────────────────
-  allergen_order?: string[];                       // ["vegan","plain","chocolate","coffee","fruit","peanut","tree_nut"]
-  allergen_transitions?: AllergenTransition[];
-  base_boldness_order?: string[];                  // ["vegan","plain","chocolate","cheesecake","graham","sherbet","sorbet"]
-  family_transition_defaults?: FamilyDefault[];
-  cleaning_decision_table?: CleanDecisionRow[];    // ordered priority list
-  optimization_flags?: Record<string, boolean>;
-  forty_four_qt_eligibility?: FortyFourQtRules;
-}
-
-interface AllergenTransition {
-  from: string;
-  to: string;
-  required_clean: "NO_CLEAN" | "WATER_RINSE" | "RINSE" | "TAKE_APART";
-  reason: string;
-}
-
-interface FamilyDefault {
-  scenario: "same_family" | "adjacent_family" | "major_family_change" | "boldness_reversed";
-  min_clean: "NO_CLEAN" | "WATER_RINSE" | "RINSE" | "TAKE_APART";
-}
-
-interface CleanDecisionRow {
-  id: string;
-  priority: number;
-  condition_kind:
-    | "has_always_ta_addin"
-    | "same_recipe_back_to_back"
-    | "same_conditional_ta_addin"
-    | "same_base_fold_in_only"
-    | "last_run_conditional_ta_chain"
-    | "allergen_escalation"
-    | "major_family_change"
-    | "same_family_different_addin"
-    | "default";
-  clean_after: "NO_CLEAN" | "WATER_RINSE" | "RINSE" | "TAKE_APART" | "from_allergen_table";
-  reason: string;
-}
-
-interface FortyFourQtRules {
-  allow_vegan: boolean;
-  allow_sorbet: boolean;
-  allow_fold_ins: boolean;
-  target_pct: number;   // 0-100
-  max_pct: number;      // 0-100
-}
+export function decideCleanAfter(
+  prev: AssignedRecipe | null,   // null = first run on machine
+  curr: AssignedRecipe,
+  rules: ProductionRules
+): { clean_after: CleanLevel; reason: string };
 ```
 
-**UI additions** to [src/app/rules/page.tsx](src/app/rules/page.tsx). Match existing visual style (accordion sections, click-to-edit cards/rows, `EditableInline`, `RuleList` patterns). Add **new structured sub-sections at the TOP of existing sections**, and retitle the existing prose rules underneath to *"Notes & nuance"*:
+Lives in [src/lib/deterministic-engine.ts](src/lib/deterministic-engine.ts) alongside the existing stub. **Don't wire it into `/api/generate` yet** — keep the feature flag default off, the Claude flow unchanged. This stage delivers the function + unit tests + a debug endpoint to compare engine vs Claude output on a request-by-request basis.
 
-1. **Allergen Sequencing section** — add:
-   - "Allergen Order" — drag-to-reorder list of allergen group names. New component `OrderedList` (or reuse existing patterns).
-   - "Transition Overrides" — table of `AllergenTransition` rows. From dropdown, To dropdown, Clean level dropdown, Reason text. Click-to-edit row.
-2. **Flavor & Base Sequencing section** — add:
-   - "Base Boldness Order" — drag-to-reorder list.
-   - "Family Transition Defaults" — table of 4 hardcoded scenarios with clean-level dropdowns.
-3. **NEW section: "Cleaning Decision Table"** — between Allergen Sequencing and Optimization. Priority-ordered table of `CleanDecisionRow` rows. Drag to reorder priority. Click to edit.
-4. **Optimization Rules section** — add:
-   - "Active Strategies" — checkbox list of `optimization_flags` keyed by named strategy ID.
-5. **44 QT Machine Assignment section** — add:
-   - "Eligibility" — three checkboxes (`allow_vegan`, `allow_sorbet`, `allow_fold_ins`).
-   - "Volume Targeting" — two numeric inputs (`target_pct`, `max_pct`).
-6. **Recipe-Specific Notes section** — extend each card with an optional "Overrides" subsection (collapsed by default):
-   - Force allergen group (dropdown of allergen_order values)
-   - Force clean_after this recipe (dropdown)
-   - Force machine (dropdown of machine names)
-   - Note: this requires adding optional fields to `RecipeNote` type as well.
+**Algorithm** (evaluates `cleaning_decision_table` rows top-to-bottom; first match wins):
 
-**Migration helper:** add a button on the Rules page labeled *"Seed structured defaults from prose"*. When clicked, POST to a new endpoint `/api/rules/seed-structured` that:
-- Reads the current `ProductionRules`
-- Sends the prose fields to Claude Haiku 4.5 with a system prompt asking to derive structured rows
-- Returns parsed structured fields
-- Client merges them into the rules object and the existing autosave persists them
+For each row in `rules.cleaning_decision_table` (or `buildStaticDefaults()` fallback):
+- `has_always_ta_addin`: true if `curr.recipe.addIns.some(a => a.taTrigger === "always")`
+- `same_recipe_back_to_back`: true if `prev?.name === curr.name`
+- `same_conditional_ta_addin`: true if `prev` and `curr` share at least one conditional-TA add-in name (case-insensitive)
+- `same_base_fold_in_only`: true if `prev?.recipe.base.type === curr.recipe.base.type` AND neither has any add-ins (only fold-ins, which don't enter the machine)
+- `last_run_conditional_ta_chain`: true if `curr` has a conditional-TA add-in AND no upcoming run shares that add-in (this needs lookahead — sequence-aware; pass it in or have the caller mark `curr.isLastOfConditionalChain`)
+- `allergen_escalation`: look up `(prev.family, curr.family)` in `allergen_transitions`. If found → return `{ clean_after: transition.required_clean, reason: transition.reason }`
+- `major_family_change`: prev family and curr family are not adjacent in `allergen_order` AND not the same
+- `same_family_different_addin`: same family but different add-in set
+- `default`: matches everything (fallback)
 
-Provide sensible hardcoded defaults too — if Claude is unavailable, the button can fall back to a static defaults function (we can derive them from the prose I've already seen in `backups/rules-2026-05-27.json`).
+When the matching row's `clean_after === "from_allergen_table"`: look up `(prev.family, curr.family)` in `rules.allergen_transitions`; if present use it, else fall back to `family_transition_defaults` and finally NO_CLEAN.
 
-**Acceptance criteria for Stage 1:**
-- [ ] `ProductionRules` interface extended with the 7 new optional fields
-- [ ] Rules page renders new sub-sections in 5 existing sections + 1 new section
-- [ ] Existing rules load and display normally (no crash if new fields are undefined)
-- [ ] User can edit any new structured row and the autosave persists it (verified by reloading and seeing the value still there)
-- [ ] `/api/rules/seed-structured` endpoint exists and works (with both Claude path and static fallback)
-- [ ] Feature flag still routes to existing Claude generator (deterministic engine stub still throws — that's expected at this stage)
-- [ ] No regression: running a generation with flag off behaves exactly as before
-- [ ] Vercel build succeeds (TypeScript strict mode, no lint errors)
+**Recipe overrides:** before evaluating the decision table, check `rules.recipe_notes` for a `RecipeNote` matching `curr.name` with `overrides.force_clean_after`. If set, short-circuit and return `{ clean_after: override, reason: "Force-set via recipe override" }`.
 
-**Deliverable:** PR-ready commit(s) on `deterministic-engine` branch. Do not merge to master.
+**Tests** (add `src/lib/deterministic-engine.test.ts` using Node's built-in `node:test` — no Jest dep needed, runs via `node --test`):
 
-### Stage 2 — `decideCleanAfter(prev, curr, rules)` in code
+- always-TA add-in → TAKE_APART regardless of prev
+- same recipe back-to-back → NO_CLEAN
+- peanut → tree_nut transition → TAKE_APART per allergen_transitions
+- same family different add-in → WATER_RINSE
+- recipe override (force_clean_after = RINSE on Fluffernutter) → RINSE
+- empty cleaning_decision_table → falls back to static defaults
+- prev = null (first run on machine) → NO_CLEAN
 
-Pure function over two consecutive runs + rules. Reads `cleaning_decision_table`, `allergen_transitions`, recipe `addIns[i].taTrigger`. Returns `{ clean_after, reason }`. Falls back to deterministic defaults when structured rules are absent.
+**Debug endpoint** (no UI; useful for cutover verification): `POST /api/debug/decide-clean-after`. Body: `{ rules, prev, curr }`. Returns the function's result. Lets you sanity-check edge cases without spinning up a generation.
 
-Not yet implemented. Acceptance criteria TBD after Stage 1 lands and we can see real structured data.
+**Acceptance criteria for Stage 2:**
+- [ ] `decideCleanAfter` exported from `src/lib/deterministic-engine.ts`
+- [ ] All test cases pass via `node --test src/lib/deterministic-engine.test.ts` (or equivalent)
+- [ ] `/api/debug/decide-clean-after` endpoint works
+- [ ] Feature flag still defaults off — `/api/generate` still routes through Claude
+- [ ] `next build` succeeds locally
+- [ ] No regression: live preview generation still produces correct run lists
+
+**Deliverable:** commit(s) on `deterministic-engine` branch. Do not merge to master, do not enable the flag.
 
 ### Stage 3 — `sequenceRuns(recipes, rules)` deterministic sequencer
 
