@@ -619,11 +619,11 @@ export default function RulesPage() {
 
 function SectionGroup({ title }: { title: string }) {
   return (
-    <div className="flex items-center gap-3 pt-4 pb-1">
-      <h2 className="text-[11px] font-bold uppercase tracking-[0.15em] text-gray-400 whitespace-nowrap">
+    <div className="flex items-center gap-3 pt-6 pb-1">
+      <h2 className="text-[15px] font-bold uppercase tracking-[0.12em] text-gray-600 whitespace-nowrap">
         {title}
       </h2>
-      <div className="flex-1 h-px bg-gray-200" />
+      <div className="flex-1 h-px bg-gray-300" />
     </div>
   );
 }
