@@ -1,8 +1,8 @@
 # Deterministic Engine Refactor — Plan
 
 **Branch:** `deterministic-engine`
-**Status:** Stages 0 + 1 + 2 + 3 complete. Stage 4 next.
-**Last updated:** 2026-05-27 (post-Stage-3)
+**Status:** Stages 0 + 1 + 2 + 3 + 4 complete. Stage 5 (cutover) next.
+**Last updated:** 2026-05-27 (post-Stage-4)
 
 This plan is self-contained. Any Claude Code session should be able to pick it up cold by reading this file plus the linked source files.
 
@@ -163,9 +163,9 @@ Greedy nearest-neighbor algorithm that minimizes cleaning cost between consecuti
 - [x] Feature flag still off; `/api/generate` unchanged
 - [x] `next build` green (30/30 routes)
 
-### Stage 4 — AI prose layer (NEXT)
+### Stage 4 — AI prose layer ✓ DONE (commit `cf55275`)
 
-Reduce `generateRunList` in `src/lib/claude.ts` to: take the finished run list from the deterministic engine and call Claude Haiku 4.5 *per machine* to write the `reason` for each run and the `footer_note`. Output is cosmetic — if it fails, fall back to stub strings ("base type X, addins Y").
+`generateRunListDeterministic` now wires the full pipeline: `assignMachines` → `sequenceRuns` per machine → `decideCleanAfter` per pair → Claude Haiku 4.5 per machine for `reason` + `footer_note`. Haiku is cosmetic (try/catch, stub fallback). Dynamic import of Anthropic SDK avoids crash when API key is unset. Setting `USE_DETERMINISTIC_ENGINE=true` activates the full engine end-to-end.
 
 ### Stage 5 — Cutover
 
