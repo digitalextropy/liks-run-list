@@ -81,9 +81,7 @@ function migrate(raw: any): ProductionRules {
     day_structure: Array.isArray(raw.day_structure) ? raw.day_structure : [],
     critical_rules: Array.isArray(raw.critical_rules) && raw.critical_rules.length > 0 ? raw.critical_rules : DEFAULT_CRITICAL_RULES,
 
-    // Pass-through for optional structured fields the upcoming deterministic
-    // engine will read. The UI on master doesn't render these yet, but we must
-    // not drop them — autosave would round-trip back and wipe them from blob.
+    // Stage 1 structured fields — pass through if present, leave undefined otherwise.
     allergen_order: Array.isArray(raw.allergen_order) ? raw.allergen_order : undefined,
     allergen_transitions: Array.isArray(raw.allergen_transitions) ? raw.allergen_transitions : undefined,
     base_boldness_order: Array.isArray(raw.base_boldness_order) ? raw.base_boldness_order : undefined,

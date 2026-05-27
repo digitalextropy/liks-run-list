@@ -1,9 +1,8 @@
 import { createPool, type VercelPool } from "@vercel/postgres";
 
 // Lazy pool init — createPool throws synchronously when POSTGRES_URL is unset,
-// which breaks Next.js page-data collection on environments where production
-// env vars aren't always present (e.g. local builds, fresh preview deploys).
-// Defer to first request instead.
+// which broke Next.js page-data collection on Vercel preview deploys (where
+// production env vars aren't always present). Defer to first request instead.
 let _pool: VercelPool | null = null;
 
 function getPool(): VercelPool {
