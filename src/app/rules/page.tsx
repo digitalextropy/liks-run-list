@@ -10,6 +10,22 @@ import type {
   CalloutType,
   RecipeNote,
   DayPhase,
+  AllergenTransition,
+  FamilyTransitionDefault,
+  FamilyTransitionScenario,
+  CleanDecisionRow,
+  CleanDecisionConditionKind,
+  CleanLevel,
+  FortyFourQtRules,
+  RecipeOverrides,
+  OptimizationFlagKey,
+} from "@/lib/rules-schema";
+import {
+  OPTIMIZATION_FLAG_KEYS,
+  OPTIMIZATION_FLAG_LABELS,
+  DEFAULT_ALLERGEN_ORDER,
+  DEFAULT_BASE_BOLDNESS_ORDER,
+  DEFAULT_FORTY_FOUR_QT_ELIGIBILITY,
 } from "@/lib/rules-schema";
 
 type EditingKey = string | null;
@@ -115,9 +131,49 @@ export default function RulesPage() {
 
   const editorCtx = { editing, setEditing, rules, update };
 
+  const hasAnyStructured = !!(
+    rules.allergen_order ||
+    rules.allergen_transitions ||
+    rules.base_boldness_order ||
+    rules.family_transition_defaults ||
+    rules.cleaning_decision_table ||
+    rules.optimization_flags ||
+    rules.forty_four_qt_eligibility
+  );
+
+  async function seedStructured() {
+    if (
+      hasAnyStructured &&
+      !confirm(
+        "Some structured fields are already set. Reseeding will OVERWRITE them with defaults. Continue?"
+      )
+    ) {
+      return;
+    }
+    try {
+      const res = await fetch("/api/rules/seed-structured", { method: "POST" });
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        alert(`Seed failed: ${data?.error || res.status}`);
+        return;
+      }
+      const defaults = await res.json();
+      setRules({ ...rules, ...defaults });
+    } catch (e) {
+      alert(`Seed failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
   return (
     <div className="max-w-4xl mx-auto px-2 space-y-7 pb-24">
-      <div className="flex items-center justify-end -mb-3">
+      <div className="flex items-center justify-end gap-3 -mb-3">
+        <button
+          onClick={seedStructured}
+          title="Populate the structured fields the deterministic engine reads, using sensible defaults derived from the prose rules."
+          className="text-xs font-medium px-2.5 py-1 rounded border border-indigo-200 text-indigo-700 bg-indigo-50 hover:bg-indigo-100"
+        >
+          {hasAnyStructured ? "Reseed structured defaults" : "Seed structured defaults"}
+        </button>
         <SaveIndicator state={saveState} />
       </div>
 
@@ -308,6 +364,32 @@ export default function RulesPage() {
           update("allergen_rules_callouts", [...rules.allergen_rules_callouts, { type: "info", text: "New callout" }])
         }
       >
+        <SubsectionHeader title="Allergen Order" hint="Run earlier (top) → run later (bottom). Used by the deterministic engine to schedule across machines." />
+        <OrderedStringList
+          items={rules.allergen_order ?? DEFAULT_ALLERGEN_ORDER}
+          onChange={(next) => update("allergen_order", next)}
+          placeholder="allergen group key (e.g. tree_nut)"
+          firstLastLabels={{ first: "first of day", last: "end of day" }}
+        />
+
+        <SubsectionHeader
+          title="Transition Overrides"
+          hint="Force a specific clean level when transitioning between two allergen groups."
+          onAdd={() =>
+            update("allergen_transitions", [
+              ...(rules.allergen_transitions ?? []),
+              { from: "peanut", to: "tree_nut", required_clean: "TAKE_APART", reason: "" },
+            ])
+          }
+        />
+        <AllergenTransitionsTable
+          transitions={rules.allergen_transitions ?? []}
+          allergenOrder={rules.allergen_order ?? DEFAULT_ALLERGEN_ORDER}
+          ctx={editorCtx}
+          onChange={(next) => update("allergen_transitions", next)}
+        />
+
+        <SubsectionHeader title="Notes & nuance" hint="Free-text rules — context for the AI prose layer and human reference." />
         <RuleList
           items={rules.allergen_rules}
           ctx={editorCtx}
@@ -330,11 +412,54 @@ export default function RulesPage() {
         title="Flavor & Base Sequencing"
         onAdd={() => update("sequencing_rules", [...rules.sequencing_rules, "New rule"])}
       >
+        <SubsectionHeader title="Base Boldness Order" hint="Within a machine, run mild (top) → bold (bottom). Used by the deterministic sequencer." />
+        <OrderedStringList
+          items={rules.base_boldness_order ?? DEFAULT_BASE_BOLDNESS_ORDER}
+          onChange={(next) => update("base_boldness_order", next)}
+          placeholder="base type (e.g. plain, chocolate)"
+        />
+
+        <SubsectionHeader title="Family Transition Defaults" hint="Minimum clean step when transitioning between flavor families." />
+        <FamilyTransitionTable
+          defaults={rules.family_transition_defaults ?? []}
+          onChange={(next) => update("family_transition_defaults", next)}
+        />
+
+        <SubsectionHeader title="Notes & nuance" hint="Free-text rules — context for the AI prose layer and human reference." />
         <RuleList
           items={rules.sequencing_rules}
           ctx={editorCtx}
           keyPrefix="sq"
           onChange={(next) => update("sequencing_rules", next)}
+        />
+      </Section>
+
+      {/* CLEANING DECISION TABLE — new section */}
+      <Section
+        icon="🧹"
+        iconColor="#0891b2"
+        iconBg="#ecfeff"
+        title="Cleaning Decision Table"
+        onAdd={() =>
+          update("cleaning_decision_table", [
+            ...(rules.cleaning_decision_table ?? []),
+            {
+              id: `rule-${Date.now()}`,
+              priority: (rules.cleaning_decision_table?.length ?? 0) + 1,
+              condition_kind: "default",
+              clean_after: "NO_CLEAN",
+              reason: "",
+            },
+          ])
+        }
+      >
+        <p className="text-xs text-gray-500 -mt-1 mb-2">
+          Priority-ordered rules. The deterministic engine evaluates these top to bottom — first match wins.
+        </p>
+        <CleanDecisionTable
+          rows={rules.cleaning_decision_table ?? []}
+          ctx={editorCtx}
+          onChange={(next) => update("cleaning_decision_table", next)}
         />
       </Section>
 
@@ -346,6 +471,13 @@ export default function RulesPage() {
         title="Optimization Rules"
         onAdd={() => update("optimization_rules", [...rules.optimization_rules, "New rule"])}
       >
+        <SubsectionHeader title="Active Strategies" hint="Toggle which optimizations the deterministic engine applies." />
+        <OptimizationFlagsList
+          flags={rules.optimization_flags ?? {}}
+          onChange={(next) => update("optimization_flags", next)}
+        />
+
+        <SubsectionHeader title="Notes & nuance" hint="Free-text rules — context for the AI prose layer and human reference." />
         <RuleList
           items={rules.optimization_rules}
           ctx={editorCtx}
@@ -364,6 +496,13 @@ export default function RulesPage() {
           update("forty_four_qt_callouts", [...rules.forty_four_qt_callouts, { type: "info", text: "New callout" }])
         }
       >
+        <SubsectionHeader title="Eligibility" hint="Recipes excluded from the 44 QT machine by category." />
+        <FortyFourQtEligibility
+          rules={rules.forty_four_qt_eligibility ?? DEFAULT_FORTY_FOUR_QT_ELIGIBILITY}
+          onChange={(next) => update("forty_four_qt_eligibility", next)}
+        />
+
+        <SubsectionHeader title="Notes & nuance" hint="Free-text rule — context for the AI prose layer and human reference." />
         <EditableInline
           keyId="44qt-rule"
           ctx={editorCtx}
@@ -1177,8 +1316,26 @@ function RecipeNoteCard({
   const isEditing = ctx.editing === keyId;
   const ref = useRef<HTMLDivElement>(null);
   useClickOutside(ref, isEditing, () => ctx.setEditing(null));
+  const [overridesOpen, setOverridesOpen] = useState(false);
 
   if (isEditing) {
+    const overrides: RecipeOverrides = value.overrides ?? {};
+    const machineNames = ctx.rules.machines.map((m) => m.name);
+    const allergenGroups = ctx.rules.allergen_order ?? DEFAULT_ALLERGEN_ORDER;
+
+    function setOverride<K extends keyof RecipeOverrides>(key: K, v: RecipeOverrides[K]) {
+      const next: RecipeOverrides = { ...overrides, [key]: v };
+      // Strip undefined keys so the saved JSON stays clean.
+      const cleaned: RecipeOverrides = {};
+      if (next.force_allergen_group) cleaned.force_allergen_group = next.force_allergen_group;
+      if (next.force_clean_after) cleaned.force_clean_after = next.force_clean_after;
+      if (next.force_machine) cleaned.force_machine = next.force_machine;
+      onChange({
+        ...value,
+        overrides: Object.keys(cleaned).length > 0 ? cleaned : undefined,
+      });
+    }
+
     return (
       <div ref={ref} className="bg-white border-2 border-indigo-400 rounded-lg p-3 space-y-2">
         <input
@@ -1195,6 +1352,60 @@ function RecipeNoteCard({
           placeholder="Note"
           className="w-full px-2 py-1 border rounded text-xs"
         />
+        <details
+          open={overridesOpen}
+          onToggle={(e) => setOverridesOpen((e.target as HTMLDetailsElement).open)}
+          className="border-t border-gray-200 pt-2"
+        >
+          <summary className="text-[11px] font-semibold text-gray-600 uppercase tracking-wider cursor-pointer hover:text-indigo-700">
+            Engine Overrides {value.overrides && Object.keys(value.overrides).length > 0 ? "·" : ""}
+            {value.overrides?.force_allergen_group && " allergen"}
+            {value.overrides?.force_clean_after && " clean"}
+            {value.overrides?.force_machine && " machine"}
+          </summary>
+          <div className="grid grid-cols-3 gap-2 mt-2">
+            <label className="block text-[11px]">
+              <span className="text-gray-600">Allergen group</span>
+              <select
+                value={overrides.force_allergen_group ?? ""}
+                onChange={(e) => setOverride("force_allergen_group", e.target.value || undefined)}
+                className="w-full px-2 py-1 border rounded text-xs mt-0.5"
+              >
+                <option value="">— default —</option>
+                {allergenGroups.map((g) => (
+                  <option key={g} value={g}>{g}</option>
+                ))}
+              </select>
+            </label>
+            <label className="block text-[11px]">
+              <span className="text-gray-600">Clean after</span>
+              <select
+                value={overrides.force_clean_after ?? ""}
+                onChange={(e) => setOverride("force_clean_after", (e.target.value || undefined) as CleanLevel | undefined)}
+                className="w-full px-2 py-1 border rounded text-xs mt-0.5"
+              >
+                <option value="">— default —</option>
+                <option value="NO_CLEAN">NO_CLEAN</option>
+                <option value="WATER_RINSE">WATER_RINSE</option>
+                <option value="RINSE">RINSE</option>
+                <option value="TAKE_APART">TAKE_APART</option>
+              </select>
+            </label>
+            <label className="block text-[11px]">
+              <span className="text-gray-600">Machine</span>
+              <select
+                value={overrides.force_machine ?? ""}
+                onChange={(e) => setOverride("force_machine", e.target.value || undefined)}
+                className="w-full px-2 py-1 border rounded text-xs mt-0.5"
+              >
+                <option value="">— any —</option>
+                {machineNames.map((m) => (
+                  <option key={m} value={m}>{m}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+        </details>
       </div>
     );
   }
@@ -1206,6 +1417,25 @@ function RecipeNoteCard({
     >
       <div className="font-semibold text-[13px] mb-1">{value.recipe}</div>
       <div className="text-[12px] text-gray-600 leading-relaxed">{value.note}</div>
+      {value.overrides && Object.keys(value.overrides).length > 0 && (
+        <div className="mt-1.5 flex flex-wrap gap-1">
+          {value.overrides.force_allergen_group && (
+            <span className="text-[10px] uppercase tracking-wide bg-purple-100 text-purple-800 px-1.5 py-0.5 rounded">
+              allergen: {value.overrides.force_allergen_group}
+            </span>
+          )}
+          {value.overrides.force_clean_after && (
+            <span className="text-[10px] uppercase tracking-wide bg-cyan-100 text-cyan-800 px-1.5 py-0.5 rounded">
+              clean: {value.overrides.force_clean_after}
+            </span>
+          )}
+          {value.overrides.force_machine && (
+            <span className="text-[10px] uppercase tracking-wide bg-green-100 text-green-800 px-1.5 py-0.5 rounded">
+              machine: {value.overrides.force_machine}
+            </span>
+          )}
+        </div>
+      )}
       <button
         onClick={(e) => {
           e.stopPropagation();
@@ -1407,6 +1637,585 @@ function CalloutItem({
       >
         ×
       </button>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Save indicator
+
+// ─────────────────────────────────────────────────────────────────────────
+// Stage 1 structured-fields components
+
+function SubsectionHeader({
+  title,
+  hint,
+  onAdd,
+}: {
+  title: string;
+  hint?: string;
+  onAdd?: () => void;
+}) {
+  return (
+    <div className="flex items-baseline gap-2 mt-3 mb-1.5 first:mt-0">
+      <h3 className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">
+        {title}
+      </h3>
+      {hint && <span className="text-[11px] text-gray-400 italic">{hint}</span>}
+      {onAdd && (
+        <button
+          onClick={onAdd}
+          title="Add"
+          className="ml-auto w-5 h-5 rounded bg-gray-100 hover:bg-indigo-100 hover:text-indigo-700 text-gray-500 flex items-center justify-center text-xs leading-none"
+        >
+          +
+        </button>
+      )}
+    </div>
+  );
+}
+
+function OrderedStringList({
+  items,
+  onChange,
+  placeholder,
+  firstLastLabels,
+}: {
+  items: string[];
+  onChange: (next: string[]) => void;
+  placeholder?: string;
+  firstLastLabels?: { first: string; last: string };
+}) {
+  function move(idx: number, dir: -1 | 1) {
+    const target = idx + dir;
+    if (target < 0 || target >= items.length) return;
+    const next = [...items];
+    [next[idx], next[target]] = [next[target], next[idx]];
+    onChange(next);
+  }
+  function setAt(idx: number, value: string) {
+    onChange(items.map((x, i) => (i === idx ? value : x)));
+  }
+  function remove(idx: number) {
+    onChange(items.filter((_, i) => i !== idx));
+  }
+  function add() {
+    onChange([...items, ""]);
+  }
+
+  return (
+    <div className="border border-gray-200 rounded-lg overflow-hidden">
+      {items.length === 0 && (
+        <div className="px-3 py-2 text-xs text-gray-400 italic">No items yet</div>
+      )}
+      {items.map((item, i) => (
+        <div
+          key={i}
+          className="group flex items-center gap-2 px-3 py-1.5 border-t first:border-t-0 border-gray-100 hover:bg-gray-50"
+        >
+          <span className="text-[11px] text-gray-400 font-mono w-6 text-right">{i + 1}.</span>
+          <input
+            value={item}
+            onChange={(e) => setAt(i, e.target.value)}
+            placeholder={placeholder}
+            className="flex-1 px-2 py-0.5 border border-transparent hover:border-gray-300 focus:border-indigo-400 focus:outline-none rounded text-sm bg-transparent"
+          />
+          {firstLastLabels && i === 0 && (
+            <span className="text-[10px] uppercase tracking-wide text-gray-400 italic">
+              {firstLastLabels.first}
+            </span>
+          )}
+          {firstLastLabels && i === items.length - 1 && items.length > 1 && (
+            <span className="text-[10px] uppercase tracking-wide text-gray-400 italic">
+              {firstLastLabels.last}
+            </span>
+          )}
+          <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity">
+            <button
+              onClick={() => move(i, -1)}
+              disabled={i === 0}
+              title="Move up"
+              className="px-1 text-gray-400 hover:text-gray-800 disabled:opacity-30"
+            >
+              ▲
+            </button>
+            <button
+              onClick={() => move(i, 1)}
+              disabled={i === items.length - 1}
+              title="Move down"
+              className="px-1 text-gray-400 hover:text-gray-800 disabled:opacity-30"
+            >
+              ▼
+            </button>
+            <button
+              onClick={() => remove(i)}
+              title="Delete"
+              className="px-1 text-gray-400 hover:text-red-600"
+            >
+              ×
+            </button>
+          </div>
+        </div>
+      ))}
+      <div className="border-t border-gray-100 bg-gray-50">
+        <button
+          onClick={add}
+          className="px-3 py-1.5 text-xs text-indigo-600 hover:text-indigo-800 w-full text-left"
+        >
+          + add
+        </button>
+      </div>
+    </div>
+  );
+}
+
+const CLEAN_LEVEL_OPTIONS: CleanLevel[] = ["NO_CLEAN", "WATER_RINSE", "RINSE", "TAKE_APART"];
+
+function AllergenTransitionsTable({
+  transitions,
+  allergenOrder,
+  ctx,
+  onChange,
+}: {
+  transitions: AllergenTransition[];
+  allergenOrder: string[];
+  ctx: EditorCtx;
+  onChange: (next: AllergenTransition[]) => void;
+}) {
+  if (transitions.length === 0) {
+    return (
+      <div className="border border-dashed border-gray-200 rounded-lg px-3 py-2 text-xs text-gray-400 italic">
+        No transition overrides — engine uses defaults for all allergen transitions.
+      </div>
+    );
+  }
+  return (
+    <div className="border border-gray-200 rounded-lg overflow-hidden">
+      <div className="grid grid-cols-12 gap-2 px-3 py-2 bg-gray-50 text-[11px] font-semibold uppercase tracking-wider text-gray-500">
+        <span className="col-span-2">From</span>
+        <span className="col-span-2">To</span>
+        <span className="col-span-2">Clean</span>
+        <span className="col-span-6">Reason</span>
+      </div>
+      {transitions.map((t, i) => (
+        <AllergenTransitionRow
+          key={`at-${i}`}
+          keyId={`at-${i}`}
+          value={t}
+          allergenOrder={allergenOrder}
+          ctx={ctx}
+          onChange={(next) => onChange(transitions.map((x, idx) => (idx === i ? next : x)))}
+          onDelete={() => onChange(transitions.filter((_, idx) => idx !== i))}
+        />
+      ))}
+    </div>
+  );
+}
+
+function AllergenTransitionRow({
+  keyId,
+  value,
+  allergenOrder,
+  ctx,
+  onChange,
+  onDelete,
+}: {
+  keyId: string;
+  value: AllergenTransition;
+  allergenOrder: string[];
+  ctx: EditorCtx;
+  onChange: (v: AllergenTransition) => void;
+  onDelete: () => void;
+}) {
+  const isEditing = ctx.editing === keyId;
+  const ref = useRef<HTMLDivElement>(null);
+  useClickOutside(ref, isEditing, () => ctx.setEditing(null));
+
+  if (isEditing) {
+    return (
+      <div
+        ref={ref}
+        className="grid grid-cols-12 gap-2 px-3 py-2 border-t border-gray-100 bg-indigo-50 items-center"
+      >
+        <select
+          autoFocus
+          value={value.from}
+          onChange={(e) => onChange({ ...value, from: e.target.value })}
+          className="col-span-2 px-1 py-1 border rounded text-xs"
+        >
+          {allergenOrder.map((g) => (
+            <option key={g} value={g}>{g}</option>
+          ))}
+        </select>
+        <select
+          value={value.to}
+          onChange={(e) => onChange({ ...value, to: e.target.value })}
+          className="col-span-2 px-1 py-1 border rounded text-xs"
+        >
+          {allergenOrder.map((g) => (
+            <option key={g} value={g}>{g}</option>
+          ))}
+        </select>
+        <select
+          value={value.required_clean}
+          onChange={(e) => onChange({ ...value, required_clean: e.target.value as CleanLevel })}
+          className="col-span-2 px-1 py-1 border rounded text-xs"
+        >
+          {CLEAN_LEVEL_OPTIONS.map((l) => (
+            <option key={l} value={l}>{l}</option>
+          ))}
+        </select>
+        <input
+          value={value.reason}
+          onChange={(e) => onChange({ ...value, reason: e.target.value })}
+          placeholder="Reason (shown in run reasoning)"
+          className="col-span-6 px-2 py-1 border rounded text-xs"
+        />
+      </div>
+    );
+  }
+  return (
+    <div
+      className="group grid grid-cols-12 gap-2 px-3 py-2 border-t border-gray-100 items-center cursor-pointer hover:bg-gray-50 text-sm"
+      onClick={() => ctx.setEditing(keyId)}
+    >
+      <div className="col-span-2 font-mono text-xs">{value.from}</div>
+      <div className="col-span-2 font-mono text-xs">→ {value.to}</div>
+      <div className={`col-span-2 font-semibold text-xs ${TIER_COLOR[value.required_clean]}`}>
+        {value.required_clean}
+      </div>
+      <div className="col-span-5 text-xs text-gray-700">{value.reason}</div>
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          onDelete();
+        }}
+        title="Delete"
+        className="col-span-1 opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-600 text-sm leading-none text-right"
+      >
+        ×
+      </button>
+    </div>
+  );
+}
+
+const FAMILY_TRANSITION_SCENARIOS: { key: FamilyTransitionScenario; label: string }[] = [
+  { key: "same_family", label: "Same family" },
+  { key: "adjacent_family", label: "Adjacent family" },
+  { key: "major_family_change", label: "Major family change" },
+  { key: "boldness_reversed", label: "Boldness reversed (bold → mild)" },
+];
+
+function FamilyTransitionTable({
+  defaults,
+  onChange,
+}: {
+  defaults: FamilyTransitionDefault[];
+  onChange: (next: FamilyTransitionDefault[]) => void;
+}) {
+  function setLevel(scenario: FamilyTransitionScenario, level: CleanLevel) {
+    const existing = defaults.find((d) => d.scenario === scenario);
+    if (existing) {
+      onChange(defaults.map((d) => (d.scenario === scenario ? { ...d, min_clean: level } : d)));
+    } else {
+      onChange([...defaults, { scenario, min_clean: level }]);
+    }
+  }
+  function getLevel(scenario: FamilyTransitionScenario): CleanLevel | "" {
+    return defaults.find((d) => d.scenario === scenario)?.min_clean ?? "";
+  }
+
+  return (
+    <div className="border border-gray-200 rounded-lg overflow-hidden">
+      {FAMILY_TRANSITION_SCENARIOS.map((s, i) => (
+        <div
+          key={s.key}
+          className={`grid grid-cols-12 gap-2 px-3 py-2 items-center ${i > 0 ? "border-t border-gray-100" : ""}`}
+        >
+          <div className="col-span-8 text-sm text-gray-800">{s.label}</div>
+          <select
+            value={getLevel(s.key)}
+            onChange={(e) => setLevel(s.key, e.target.value as CleanLevel)}
+            className="col-span-4 px-2 py-1 border rounded text-xs"
+          >
+            <option value="">— not set —</option>
+            {CLEAN_LEVEL_OPTIONS.map((l) => (
+              <option key={l} value={l}>{l}</option>
+            ))}
+          </select>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+const CLEAN_DECISION_CONDITION_LABELS: Record<CleanDecisionConditionKind, string> = {
+  has_always_ta_addin: "Recipe has any always-TA add-in",
+  same_recipe_back_to_back: "Same recipe back-to-back",
+  same_conditional_ta_addin: "Same conditional-TA add-in carryover",
+  same_base_fold_in_only: "Same base, fold-in only difference",
+  last_run_conditional_ta_chain: "Last run of conditional-TA chain",
+  allergen_escalation: "Allergen escalation (see transitions)",
+  major_family_change: "Major family change",
+  same_family_different_addin: "Same family, different add-in",
+  default: "Default fallback",
+};
+
+function CleanDecisionTable({
+  rows,
+  ctx,
+  onChange,
+}: {
+  rows: CleanDecisionRow[];
+  ctx: EditorCtx;
+  onChange: (next: CleanDecisionRow[]) => void;
+}) {
+  function move(idx: number, dir: -1 | 1) {
+    const target = idx + dir;
+    if (target < 0 || target >= rows.length) return;
+    const next = [...rows];
+    [next[idx], next[target]] = [next[target], next[idx]];
+    onChange(next.map((r, i) => ({ ...r, priority: i + 1 })));
+  }
+
+  if (rows.length === 0) {
+    return (
+      <div className="border border-dashed border-gray-200 rounded-lg px-3 py-4 text-xs text-gray-400 italic text-center">
+        No decision rules yet. Click + to add the first, or use the seed-structured-defaults button.
+      </div>
+    );
+  }
+
+  return (
+    <div className="border border-gray-200 rounded-lg overflow-hidden">
+      <div className="grid grid-cols-12 gap-2 px-3 py-2 bg-gray-50 text-[11px] font-semibold uppercase tracking-wider text-gray-500">
+        <span className="col-span-1">#</span>
+        <span className="col-span-5">Condition</span>
+        <span className="col-span-2">Clean After</span>
+        <span className="col-span-4">Reason</span>
+      </div>
+      {rows.map((row, i) => (
+        <CleanDecisionRowEdit
+          key={row.id}
+          keyId={`cd-${row.id}`}
+          value={row}
+          index={i}
+          isFirst={i === 0}
+          isLast={i === rows.length - 1}
+          ctx={ctx}
+          onChange={(next) => onChange(rows.map((x, idx) => (idx === i ? next : x)))}
+          onDelete={() => onChange(rows.filter((_, idx) => idx !== i).map((r, idx) => ({ ...r, priority: idx + 1 })))}
+          onMoveUp={() => move(i, -1)}
+          onMoveDown={() => move(i, 1)}
+        />
+      ))}
+    </div>
+  );
+}
+
+function CleanDecisionRowEdit({
+  keyId,
+  value,
+  index,
+  isFirst,
+  isLast,
+  ctx,
+  onChange,
+  onDelete,
+  onMoveUp,
+  onMoveDown,
+}: {
+  keyId: string;
+  value: CleanDecisionRow;
+  index: number;
+  isFirst: boolean;
+  isLast: boolean;
+  ctx: EditorCtx;
+  onChange: (v: CleanDecisionRow) => void;
+  onDelete: () => void;
+  onMoveUp: () => void;
+  onMoveDown: () => void;
+}) {
+  const isEditing = ctx.editing === keyId;
+  const ref = useRef<HTMLDivElement>(null);
+  useClickOutside(ref, isEditing, () => ctx.setEditing(null));
+
+  if (isEditing) {
+    return (
+      <div
+        ref={ref}
+        className="grid grid-cols-12 gap-2 px-3 py-2 border-t border-gray-100 bg-indigo-50 items-center"
+      >
+        <div className="col-span-1 text-xs font-mono text-gray-500">{index + 1}</div>
+        <select
+          autoFocus
+          value={value.condition_kind}
+          onChange={(e) => onChange({ ...value, condition_kind: e.target.value as CleanDecisionConditionKind })}
+          className="col-span-5 px-1 py-1 border rounded text-xs"
+        >
+          {Object.entries(CLEAN_DECISION_CONDITION_LABELS).map(([k, label]) => (
+            <option key={k} value={k}>{label}</option>
+          ))}
+        </select>
+        <select
+          value={value.clean_after}
+          onChange={(e) => onChange({ ...value, clean_after: e.target.value as CleanLevel | "from_allergen_table" })}
+          className="col-span-2 px-1 py-1 border rounded text-xs"
+        >
+          {CLEAN_LEVEL_OPTIONS.map((l) => (
+            <option key={l} value={l}>{l}</option>
+          ))}
+          <option value="from_allergen_table">from_allergen_table</option>
+        </select>
+        <input
+          value={value.reason}
+          onChange={(e) => onChange({ ...value, reason: e.target.value })}
+          placeholder="Reason"
+          className="col-span-4 px-2 py-1 border rounded text-xs"
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="group grid grid-cols-12 gap-2 px-3 py-2 border-t border-gray-100 items-center cursor-pointer hover:bg-gray-50 text-sm"
+      onClick={() => ctx.setEditing(keyId)}
+    >
+      <div className="col-span-1 text-xs font-mono text-gray-500">{index + 1}</div>
+      <div className="col-span-5 text-xs text-gray-800">
+        {CLEAN_DECISION_CONDITION_LABELS[value.condition_kind]}
+      </div>
+      <div className={`col-span-2 font-semibold text-xs ${value.clean_after === "from_allergen_table" ? "text-gray-500" : TIER_COLOR[value.clean_after as CleanLevel]}`}>
+        {value.clean_after}
+      </div>
+      <div className="col-span-3 text-xs text-gray-700">{value.reason}</div>
+      <div className="col-span-1 flex items-center justify-end gap-0.5 opacity-0 group-hover:opacity-100">
+        <button
+          onClick={(e) => { e.stopPropagation(); onMoveUp(); }}
+          disabled={isFirst}
+          title="Higher priority"
+          className="px-0.5 text-gray-400 hover:text-gray-800 disabled:opacity-30 text-xs"
+        >
+          ▲
+        </button>
+        <button
+          onClick={(e) => { e.stopPropagation(); onMoveDown(); }}
+          disabled={isLast}
+          title="Lower priority"
+          className="px-0.5 text-gray-400 hover:text-gray-800 disabled:opacity-30 text-xs"
+        >
+          ▼
+        </button>
+        <button
+          onClick={(e) => { e.stopPropagation(); onDelete(); }}
+          title="Delete"
+          className="px-0.5 text-gray-400 hover:text-red-600 text-sm leading-none"
+        >
+          ×
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function OptimizationFlagsList({
+  flags,
+  onChange,
+}: {
+  flags: Record<string, boolean>;
+  onChange: (next: Record<string, boolean>) => void;
+}) {
+  return (
+    <div className="border border-gray-200 rounded-lg divide-y divide-gray-100">
+      {OPTIMIZATION_FLAG_KEYS.map((key) => (
+        <label
+          key={key}
+          className="flex items-center gap-2.5 px-3 py-2 cursor-pointer hover:bg-gray-50"
+        >
+          <input
+            type="checkbox"
+            checked={flags[key] ?? false}
+            onChange={(e) => onChange({ ...flags, [key]: e.target.checked })}
+            className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500"
+          />
+          <span className="text-sm text-gray-800">
+            {OPTIMIZATION_FLAG_LABELS[key as OptimizationFlagKey]}
+          </span>
+        </label>
+      ))}
+    </div>
+  );
+}
+
+function FortyFourQtEligibility({
+  rules,
+  onChange,
+}: {
+  rules: FortyFourQtRules;
+  onChange: (next: FortyFourQtRules) => void;
+}) {
+  return (
+    <div className="border border-gray-200 rounded-lg p-3 space-y-3">
+      <div className="grid grid-cols-3 gap-2">
+        <label className="flex items-center gap-2 text-sm cursor-pointer">
+          <input
+            type="checkbox"
+            checked={rules.allow_vegan}
+            onChange={(e) => onChange({ ...rules, allow_vegan: e.target.checked })}
+            className="w-4 h-4 rounded text-indigo-600"
+          />
+          Allow vegan
+        </label>
+        <label className="flex items-center gap-2 text-sm cursor-pointer">
+          <input
+            type="checkbox"
+            checked={rules.allow_sorbet}
+            onChange={(e) => onChange({ ...rules, allow_sorbet: e.target.checked })}
+            className="w-4 h-4 rounded text-indigo-600"
+          />
+          Allow sorbet/sherbet
+        </label>
+        <label className="flex items-center gap-2 text-sm cursor-pointer">
+          <input
+            type="checkbox"
+            checked={rules.allow_fold_ins}
+            onChange={(e) => onChange({ ...rules, allow_fold_ins: e.target.checked })}
+            className="w-4 h-4 rounded text-indigo-600"
+          />
+          Allow fold-ins
+        </label>
+      </div>
+      <div className="border-t border-gray-100 pt-3 grid grid-cols-2 gap-3">
+        <label className="block text-xs">
+          <span className="text-gray-600 font-medium">Target % of total volume</span>
+          <div className="flex items-center gap-1 mt-1">
+            <input
+              type="number"
+              min={0}
+              max={100}
+              value={rules.target_pct}
+              onChange={(e) => onChange({ ...rules, target_pct: parseInt(e.target.value) || 0 })}
+              className="w-20 px-2 py-1 border rounded text-sm"
+            />
+            <span className="text-sm text-gray-500">%</span>
+          </div>
+        </label>
+        <label className="block text-xs">
+          <span className="text-gray-600 font-medium">Max % of total volume</span>
+          <div className="flex items-center gap-1 mt-1">
+            <input
+              type="number"
+              min={0}
+              max={100}
+              value={rules.max_pct}
+              onChange={(e) => onChange({ ...rules, max_pct: parseInt(e.target.value) || 0 })}
+              className="w-20 px-2 py-1 border rounded text-sm"
+            />
+            <span className="text-sm text-gray-500">%</span>
+          </div>
+        </label>
+      </div>
     </div>
   );
 }
