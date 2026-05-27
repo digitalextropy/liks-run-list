@@ -1,8 +1,8 @@
 # Deterministic Engine Refactor — Plan
 
 **Branch:** `deterministic-engine`
-**Status:** Stages 0 + 1 + 2 complete. Stage 3 next.
-**Last updated:** 2026-05-27 (post-Stage-2)
+**Status:** Stages 0 + 1 + 2 + 3 complete. Stage 4 next.
+**Last updated:** 2026-05-27 (post-Stage-3)
 
 This plan is self-contained. Any Claude Code session should be able to pick it up cold by reading this file plus the linked source files.
 
@@ -151,11 +151,19 @@ When the matching row's `clean_after === "from_allergen_table"`: look up `(prev.
 
 **Deliverable:** commit(s) on `deterministic-engine` branch. Do not merge to master, do not enable the flag.
 
-### Stage 3 — `sequenceRuns(recipes, rules)` deterministic sequencer (NEXT)
+### Stage 3 — `sequenceRuns(recipes, rules)` deterministic sequencer ✓ DONE (commit `d364813`)
 
-After Stage 2. Solves the within-machine ordering problem: given a set of recipes assigned to a machine, produce the run order that minimizes take-aparts while respecting allergen partial order + base boldness order. With N ≤ ~15 per machine, exact branch-and-bound is tractable. Falls back to greedy heuristic if it ever isn't.
+Greedy nearest-neighbor algorithm that minimizes cleaning cost between consecutive runs. Respects allergen order (vegan first, nuts last), base boldness, and same-recipe chaining. Expands multi-run recipes, marks conditional-TA chain ends. `sequenceRunsWithCost()` returns sequence + total clean time breakdown.
 
-### Stage 4 — AI prose layer
+**Acceptance criteria for Stage 3:**
+- [x] `sequenceRuns` exported from `src/lib/deterministic-engine.ts`
+- [x] All 13 unit tests pass (7 decideCleanAfter + 6 sequenceRuns)
+- [x] `/api/debug/sequence-runs` POST endpoint works (30 routes in build)
+- [x] `decideCleanAfter` + `sequenceRuns` composed: chained calls produce valid ordering
+- [x] Feature flag still off; `/api/generate` unchanged
+- [x] `next build` green (30/30 routes)
+
+### Stage 4 — AI prose layer (NEXT)
 
 Reduce `generateRunList` in `src/lib/claude.ts` to: take the finished run list from the deterministic engine and call Claude Haiku 4.5 *per machine* to write the `reason` for each run and the `footer_note`. Output is cosmetic — if it fails, fall back to stub strings ("base type X, addins Y").
 
