@@ -63,18 +63,18 @@ function buildStaticDefaults(): SeedStructuredResponse {
 
   const cleaning_decision_table: CleanDecisionRow[] = [
     {
-      id: "cd-1-always-ta",
+      id: "cd-1-same-recipe",
       priority: 1,
-      condition_kind: "has_always_ta_addin",
-      clean_after: "TAKE_APART",
-      reason: "Recipe contains an always-TA add-in (sticky pieces in blades).",
-    },
-    {
-      id: "cd-2-same-recipe",
-      priority: 2,
       condition_kind: "same_recipe_back_to_back",
       clean_after: "NO_CLEAN",
       reason: "Identical recipes — no transfer concern.",
+    },
+    {
+      id: "cd-2-always-ta",
+      priority: 2,
+      condition_kind: "has_always_ta_addin",
+      clean_after: "TAKE_APART",
+      reason: "Recipe contains an always-TA add-in (sticky pieces in blades).",
     },
     {
       id: "cd-3-same-conditional",

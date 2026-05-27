@@ -7,8 +7,8 @@ import { DEFAULT_ALLERGEN_ORDER, DEFAULT_BASE_BOLDNESS_ORDER } from "./rules-sch
 
 function buildStaticCleaningDecisionTable(): CleanDecisionRow[] {
   return [
-    { id: "cd-1-always-ta", priority: 1, condition_kind: "has_always_ta_addin", clean_after: "TAKE_APART", reason: "Recipe contains an always-TA add-in (sticky pieces in blades)." },
-    { id: "cd-2-same-recipe", priority: 2, condition_kind: "same_recipe_back_to_back", clean_after: "NO_CLEAN", reason: "Identical recipes — no transfer concern." },
+    { id: "cd-1-same-recipe", priority: 1, condition_kind: "same_recipe_back_to_back", clean_after: "NO_CLEAN", reason: "Identical recipes — no transfer concern." },
+    { id: "cd-2-always-ta", priority: 2, condition_kind: "has_always_ta_addin", clean_after: "TAKE_APART", reason: "Recipe contains an always-TA add-in (sticky pieces in blades)." },
     { id: "cd-3-same-conditional", priority: 3, condition_kind: "same_conditional_ta_addin", clean_after: "NO_CLEAN", reason: "Same conditional-TA add-in carries over cleanly." },
     { id: "cd-4-same-base-foldin", priority: 4, condition_kind: "same_base_fold_in_only", clean_after: "NO_CLEAN", reason: "Same base, differences are fold-ins (outside machine)." },
     { id: "cd-5-last-conditional", priority: 5, condition_kind: "last_run_conditional_ta_chain", clean_after: "TAKE_APART", reason: "End of conditional-TA chain — clear residue." },

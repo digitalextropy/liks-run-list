@@ -162,6 +162,25 @@ describe("decideCleanAfter", () => {
     assert.equal(result.clean_after, "TAKE_APART");
   });
 
+  it("same recipe with always-TA add-in back-to-back → NO_CLEAN (chaining)", () => {
+    const strawberry = makeRecipe({
+      name: "Strawberry",
+      recipe: {
+        name: "Strawberry",
+        base: { type: "plain", ingredients: [] },
+        addIns: [{ name: "Strawberries", quantity: "2 cups", taTrigger: "always" }],
+        foldIns: [],
+        allergens: [],
+        eligible44qt: false,
+        notes: null,
+      },
+    });
+    const rules = minimalRules();
+
+    const result = decideCleanAfter(strawberry, { ...strawberry }, rules);
+    assert.equal(result.clean_after, "NO_CLEAN");
+  });
+
   it("prev = null (first run on machine) → NO_CLEAN", () => {
     const curr = makeRecipe({ name: "Vanilla" });
     const rules = minimalRules();
