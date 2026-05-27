@@ -1,7 +1,7 @@
-import type { ProductionRules, CleanLevel, CleanDecisionRow, AllergenTransition } from "./rules-schema";
+import type { ProductionRules, CleanLevel, CleanDecisionRow, AllergenTransition, CleaningTier } from "./rules-schema";
 import type { RunListOutput } from "./claude";
 import type { RecipeRequest, AssignedRecipe } from "./machine-assigner";
-import { DEFAULT_ALLERGEN_ORDER } from "./rules-schema";
+import { DEFAULT_ALLERGEN_ORDER, DEFAULT_BASE_BOLDNESS_ORDER } from "./rules-schema";
 
 // ─── Static defaults (mirror of seed-structured/route.ts buildStaticDefaults) ───
 
@@ -196,6 +196,158 @@ export function decideCleanAfter(
 
   // Should never reach here if table has a "default" row, but safety fallback
   return { clean_after: "NO_CLEAN", reason: "No matching rule — default." };
+}
+
+// ─── Stage 3: sequenceRuns ───
+
+const CLEAN_LEVEL_COST: Record<CleanLevel, number> = {
+  NO_CLEAN: 0,
+  WATER_RINSE: 3,
+  RINSE: 8,
+  TAKE_APART: 25,
+};
+
+function cleanCostMinutes(level: CleanLevel, tiers: CleaningTier[] | undefined): number {
+  if (tiers?.length) {
+    const tier = tiers.find(t => t.level === level);
+    if (tier) return tier.duration_minutes;
+  }
+  return CLEAN_LEVEL_COST[level];
+}
+
+function familyPosition(family: string, allergenOrder: string[]): number {
+  const idx = allergenOrder.indexOf(family);
+  return idx === -1 ? allergenOrder.length : idx;
+}
+
+function boldnessPosition(baseType: string, boldnessOrder: string[]): number {
+  const idx = boldnessOrder.indexOf(baseType);
+  return idx === -1 ? boldnessOrder.length : idx;
+}
+
+function expandRuns(recipes: AssignedRecipe[]): AssignedRecipe[] {
+  const expanded: AssignedRecipe[] = [];
+  for (const r of recipes) {
+    for (let i = 0; i < r.runsNeeded; i++) {
+      expanded.push({ ...r });
+    }
+  }
+  return expanded;
+}
+
+function markConditionalChainEnds(sequence: AssignedRecipe[]): void {
+  for (let i = 0; i < sequence.length; i++) {
+    const curr = sequence[i];
+    const conditionalAddIns = curr.recipe.addIns
+      .filter(a => a.taTrigger === "conditional")
+      .map(a => a.name.toLowerCase().trim());
+
+    if (conditionalAddIns.length === 0) continue;
+
+    const hasLaterShared = sequence.slice(i + 1).some(later =>
+      later.recipe.addIns.some(
+        a => a.taTrigger === "conditional" && conditionalAddIns.includes(a.name.toLowerCase().trim())
+      )
+    );
+
+    (curr as AssignedRecipe & { isLastOfConditionalChain?: boolean }).isLastOfConditionalChain = !hasLaterShared;
+  }
+}
+
+export function sequenceRuns(
+  recipes: AssignedRecipe[],
+  rules: ProductionRules
+): AssignedRecipe[] {
+  if (recipes.length === 0) return [];
+
+  const allergenOrder = rules.allergen_order ?? [...DEFAULT_ALLERGEN_ORDER];
+  const boldnessOrder = rules.base_boldness_order ?? [...DEFAULT_BASE_BOLDNESS_ORDER];
+
+  // Expand multi-run recipes into individual run entries
+  const runs = expandRuns(recipes);
+  if (runs.length <= 1) return runs;
+
+  // Greedy nearest-neighbor: pick the next run that minimizes cleaning cost.
+  // Tiebreak by: allergen order position, then boldness order, then name (stable).
+  const remaining = new Set(runs.map((_, i) => i));
+  const sequence: AssignedRecipe[] = [];
+
+  // Seed: pick the run with the lowest allergen order position, then lowest boldness
+  let bestStart = 0;
+  let bestStartScore = Infinity;
+  for (const idx of remaining) {
+    const r = runs[idx];
+    const score = familyPosition(r.family, allergenOrder) * 1000 + boldnessPosition(r.recipe.base.type, boldnessOrder);
+    if (score < bestStartScore) {
+      bestStartScore = score;
+      bestStart = idx;
+    }
+  }
+  sequence.push(runs[bestStart]);
+  remaining.delete(bestStart);
+
+  while (remaining.size > 0) {
+    const prev = sequence[sequence.length - 1];
+    let bestIdx = -1;
+    let bestCost = Infinity;
+    let bestTiebreak = Infinity;
+
+    for (const idx of remaining) {
+      const candidate = runs[idx];
+      const decision = decideCleanAfter(prev, candidate, rules);
+      const cost = cleanCostMinutes(decision.clean_after, rules.cleaning_tiers);
+
+      // Tiebreak: prefer same recipe (chains), then allergen order, then boldness, then name
+      const sameRecipe = prev.name === candidate.name ? 0 : 1;
+      const tiebreak =
+        sameRecipe * 1_000_000 +
+        familyPosition(candidate.family, allergenOrder) * 1000 +
+        boldnessPosition(candidate.recipe.base.type, boldnessOrder);
+
+      if (cost < bestCost || (cost === bestCost && tiebreak < bestTiebreak)) {
+        bestCost = cost;
+        bestTiebreak = tiebreak;
+        bestIdx = idx;
+      }
+    }
+
+    sequence.push(runs[bestIdx]);
+    remaining.delete(bestIdx);
+  }
+
+  // Mark conditional-TA chain endpoints for decideCleanAfter lookahead
+  markConditionalChainEnds(sequence);
+
+  return sequence;
+}
+
+export interface SequenceResult {
+  sequence: AssignedRecipe[];
+  totalCleanMinutes: number;
+  cleanBreakdown: { from: string; to: string; clean_after: CleanLevel; minutes: number }[];
+}
+
+export function sequenceRunsWithCost(
+  recipes: AssignedRecipe[],
+  rules: ProductionRules
+): SequenceResult {
+  const sequence = sequenceRuns(recipes, rules);
+  const cleanBreakdown: SequenceResult["cleanBreakdown"] = [];
+  let totalCleanMinutes = 0;
+
+  for (let i = 1; i < sequence.length; i++) {
+    const decision = decideCleanAfter(sequence[i - 1], sequence[i], rules);
+    const minutes = cleanCostMinutes(decision.clean_after, rules.cleaning_tiers);
+    cleanBreakdown.push({
+      from: sequence[i - 1].name,
+      to: sequence[i].name,
+      clean_after: decision.clean_after,
+      minutes,
+    });
+    totalCleanMinutes += minutes;
+  }
+
+  return { sequence, totalCleanMinutes, cleanBreakdown };
 }
 
 // ─── Existing exports ───
