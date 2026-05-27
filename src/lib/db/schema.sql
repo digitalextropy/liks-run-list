@@ -50,3 +50,11 @@ CREATE INDEX IF NOT EXISTS idx_product_ingredients_product ON product_ingredient
 CREATE INDEX IF NOT EXISTS idx_product_ingredients_ingredient ON product_ingredients(ingredient_id);
 CREATE INDEX IF NOT EXISTS idx_products_active ON products(active);
 CREATE INDEX IF NOT EXISTS idx_ingredients_active ON ingredients(active);
+
+-- Lock down public API access. The app connects as the postgres superuser
+-- via POSTGRES_URL and bypasses RLS, so this only blocks PostgREST (anon/authenticated).
+ALTER TABLE products ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ingredients ENABLE ROW LEVEL SECURITY;
+ALTER TABLE product_ingredients ENABLE ROW LEVEL SECURITY;
+
+REVOKE ALL ON products, ingredients, product_ingredients FROM anon, authenticated;
