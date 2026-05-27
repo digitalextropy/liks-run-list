@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { getRules } from "@/lib/blob";
 import { generateRunList, type RunListOutput } from "@/lib/claude";
+import {
+  generateRunListDeterministic,
+  isDeterministicEngineEnabled,
+} from "@/lib/deterministic-engine";
 import type { ProductionRules } from "@/lib/rules-schema";
 import type { Recipe } from "@/lib/recipe-schema";
 
@@ -61,7 +65,13 @@ export async function POST(request: Request) {
   }
 
   try {
-    const runList = await generateRunList(recipes, filteredRules);
+    const useDeterministic = isDeterministicEngineEnabled();
+    console.log(
+      `[generate] engine: ${useDeterministic ? "deterministic" : "claude"}`
+    );
+    const runList = useDeterministic
+      ? await generateRunListDeterministic(recipes, filteredRules)
+      : await generateRunList(recipes, filteredRules);
     const normalized = normalizeChainLabels(runList);
 
     // Build scheduled-tubs map from actual run data (not Claude's self-reported totals).
