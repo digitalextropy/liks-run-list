@@ -491,6 +491,49 @@ No markdown, no commentary.`;
   }
 }
 
+// Claude occasionally emits a clean_after value in `runs[].clean_after`, then second-guesses
+// itself in `footer_note` with text like "Fluffernutter run 5 clean_after should be RINSE"
+// or "the intended clean_after for order 5 is RINSE". When that happens, the footer is the
+// more considered judgment — apply it to the corresponding run.
+const CLEAN_VALUES = ["NO_CLEAN", "WATER_RINSE", "RINSE", "TAKE_APART"] as const;
+type CleanValue = (typeof CLEAN_VALUES)[number];
+
+function applyFooterCorrections(machine: MachineRunListSlice): void {
+  if (!machine.footer_note) return;
+  const cleanGroup = CLEAN_VALUES.join("|");
+
+  // "run 5 ... clean_after ... should be/is RINSE"  |  "order 5 ... clean_after ... is RINSE"
+  const formA = new RegExp(
+    `(?:run|order)\\s+(\\d+)[^.\\n]*?clean_after[^.\\n]*?(?:should\\s+be|is|=)\\s+(${cleanGroup})`,
+    "gi"
+  );
+  // "clean_after for order/run 5 ... should be/is RINSE"
+  const formB = new RegExp(
+    `clean_after\\s+for\\s+(?:order|run)\\s+(\\d+)[^.\\n]*?(?:should\\s+be|is|=)\\s+(${cleanGroup})`,
+    "gi"
+  );
+
+  const corrections = new Map<number, CleanValue>();
+  for (const re of [formA, formB]) {
+    for (const m of machine.footer_note.matchAll(re)) {
+      corrections.set(parseInt(m[1], 10), m[2].toUpperCase() as CleanValue);
+    }
+  }
+  if (corrections.size === 0) return;
+
+  for (const run of machine.runs) {
+    const corrected = corrections.get(run.order);
+    if (corrected && run.clean_after !== corrected) {
+      console.log(
+        `[generate] ${machine.name}: footer-corrected run ${run.order} (${run.flavor}) clean_after ${run.clean_after} → ${corrected}`
+      );
+      run.clean_after = corrected;
+    }
+  }
+
+  // Summary will be recomputed by enforceRunCounts, no need to touch it here.
+}
+
 function emptyMachineSlice(machineName: string, rules: ProductionRules): MachineRunListSlice {
   const m = rules.machines.find((x) => x.name === machineName);
   return {
@@ -526,7 +569,9 @@ export async function generateRunList(
     rules.machines.map(async (m) => {
       const recs = byMachine.get(m.name);
       if (!recs || recs.length === 0) return emptyMachineSlice(m.name, rules);
-      return generateMachineRuns(m.name, recs, rules, systemPrompt);
+      const slice = await generateMachineRuns(m.name, recs, rules, systemPrompt);
+      applyFooterCorrections(slice);
+      return slice;
     })
   );
   console.log(`[generate] all ${rules.machines.length} machine calls completed in ${Date.now() - tStart}ms`);
